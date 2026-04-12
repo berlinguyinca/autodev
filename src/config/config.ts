@@ -7,6 +7,7 @@ const RepoConfigSchema = z.object({
   name: z.string().min(1),
   defaultBranch: z.string().default('main'),
   testCommand: z.string().optional(),
+  cloneUrl: z.string().optional(),
 })
 
 const PipelineConfigSchema = z.object({
@@ -29,6 +30,7 @@ function toTyped(parsed: ZodParsed): PipelineConfig {
     repos: parsed.repos.map((r): RepoConfig => {
       const repo: RepoConfig = { owner: r.owner, name: r.name, defaultBranch: r.defaultBranch }
       if (r.testCommand !== undefined) repo.testCommand = r.testCommand
+      if (r.cloneUrl !== undefined) repo.cloneUrl = r.cloneUrl
       return repo
     }),
     ollamaModel: parsed.ollamaModel,

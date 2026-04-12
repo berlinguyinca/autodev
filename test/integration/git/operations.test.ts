@@ -127,7 +127,7 @@ describe('GitOperations integration', () => {
       await git.commitAll(targetDir, 'initial commit')
 
       // Now call commitAll with nothing staged — should not throw
-      await expect(git.commitAll(targetDir, 'empty commit')).resolves.toBeUndefined()
+      await expect(git.commitAll(targetDir, 'empty commit')).resolves.toBe(false)
     })
   })
 

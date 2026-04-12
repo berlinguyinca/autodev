@@ -15,6 +15,18 @@ export class IssueProcessor {
     private readonly state: StateManager,
   ) {}
 
+  private async postStatusComment(
+    repo: RepoConfig,
+    issue: Issue,
+    lines: string[],
+  ): Promise<void> {
+    try {
+      await this.github.postIssueComment(repo.owner, repo.name, issue.number, lines.join('\n').trim())
+    } catch {
+      // Best effort status reporting only.
+    }
+  }
+
   async processIssue(repo: RepoConfig, issue: Issue): Promise<ProcessingResult> {
     const repoFullName = `${repo.owner}/${repo.name}`
     const base = repo.defaultBranch ?? 'main'
@@ -67,7 +79,7 @@ export class IssueProcessor {
 
     try {
       const repoUrl = repo.cloneUrl ?? `https://github.com/${repo.owner}/${repo.name}.git`
-      await this.git.clone(repoUrl, tempDir)
+      await this.git.clone(repoUrl, tempDir, base)
 
       // 4. Create branch
       await this.git.createBranch(tempDir, branchName)
@@ -107,18 +119,30 @@ export class IssueProcessor {
       }
 
       // 8. Commit all changes
-      try {
-        await this.git.commitAll(tempDir, `ai: implement issue #${issue.number} — ${issue.title}`)
-      } catch {
-        // non-fatal if nothing to commit
+      const committed = await this.git.commitAll(tempDir, `ai: implement issue #${issue.number} — ${issue.title}`)
+      if (!committed) {
+        const error = 'AI run produced no commit; skipping PR creation.'
+        await this.postStatusComment(repo, issue, [
+          `🤖 **AI Implementation Attempt** — Issue #${issue.number}`,
+          '',
+          '⚠️ No commit was created, so no PR was opened.',
+          `**Model used:** ${modelUsed}`,
+          `**Tests:** ${testsPassed ? '✅ Passing' : '❌ Failing'}`,
+        ])
+        return {
+          issueNumber: issue.number,
+          repoFullName,
+          success: false,
+          isDraft: false,
+          testsPassed,
+          modelUsed,
+          filesChanged: [],
+          error,
+        }
       }
 
       // 9. Push branch
-      try {
-        await this.git.push(tempDir, branchName)
-      } catch {
-        // non-fatal push error — we'll still create the PR
-      }
+      await this.git.push(tempDir, branchName)
 
       // 10. Create PR (regular or draft based on test result and AI failure)
       const prTitle = `[AI] ${issue.title}`
@@ -186,8 +210,10 @@ export class IssueProcessor {
             modelUsed = followUpResult.model
 
             // 15. Commit and push follow-up
-            await this.git.commitAll(tempDir, `ai: address review comments for #${issue.number}`)
-            await this.git.push(tempDir, branchName)
+            const committedFollowUp = await this.git.commitAll(tempDir, `ai: address review comments for #${issue.number}`)
+            if (committedFollowUp) {
+              await this.git.push(tempDir, branchName)
+            }
           } catch {
             // non-fatal follow-up failure
           }
@@ -196,7 +222,7 @@ export class IssueProcessor {
 
       // 16. Get changed files list
       try {
-        filesChanged = await this.git.getChangedFiles(tempDir)
+        filesChanged = await this.git.getChangedFiles(tempDir, `origin/${base}`)
       } catch {
         filesChanged = []
       }
@@ -229,6 +255,16 @@ export class IssueProcessor {
       }
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
+      if (prUrl === undefined) {
+        await this.postStatusComment(repo, issue, [
+          `🤖 **AI Implementation Attempt** — Issue #${issue.number}`,
+          '',
+          '⚠️ The pipeline failed before opening a PR.',
+          `**Model used:** ${modelUsed}`,
+          `**Tests:** ${testsPassed ? '✅ Passing' : '❌ Failing'}`,
+          `**Error:** ${error}`,
+        ])
+      }
       const failResult: ProcessingResult = {
         issueNumber: issue.number,
         repoFullName,

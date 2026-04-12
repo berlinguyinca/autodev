@@ -11,7 +11,7 @@
  */
 
 import { writeFileSync, readFileSync, existsSync, renameSync } from 'node:fs'
-import type { PipelineState, AIModel } from '../types/index.js'
+import type { PipelineState, AIModel, PipelineConfig } from '../types/index.js'
 
 const DEFAULT_CLAUDE_LIMIT = 100
 const DEFAULT_CODEX_LIMIT = 50
@@ -31,18 +31,30 @@ function buildDefaultState(): PipelineState {
   }
 }
 
+function mergeQuotaLimits(
+  state: PipelineState,
+  quotaLimits?: PipelineConfig['quotaLimits'],
+): PipelineState {
+  if (quotaLimits?.claude !== undefined) state.quota.claude.limit = quotaLimits.claude
+  if (quotaLimits?.codex !== undefined) state.quota.codex.limit = quotaLimits.codex
+  return state
+}
+
 export class StateManager {
-  constructor(private readonly statePath: string) {}
+  constructor(
+    private readonly statePath: string,
+    private readonly quotaLimits?: PipelineConfig['quotaLimits'],
+  ) {}
 
   private load(): PipelineState {
     if (!existsSync(this.statePath)) {
-      const state = buildDefaultState()
+      const state = mergeQuotaLimits(buildDefaultState(), this.quotaLimits)
       this.save(state)
       return state
     }
 
     const raw = readFileSync(this.statePath, 'utf-8')
-    const state = JSON.parse(raw) as PipelineState
+    const state = mergeQuotaLimits(JSON.parse(raw) as PipelineState, this.quotaLimits)
 
     // Monthly reset: if either quota's resetMonth is in the past, reset used counters
     const now = currentUtcMonth()

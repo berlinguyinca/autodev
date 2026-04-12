@@ -93,7 +93,7 @@ function makeGitMock() {
   return {
     clone: vi.fn().mockResolvedValue(undefined),
     createBranch: vi.fn().mockResolvedValue(undefined),
-    commitAll: vi.fn().mockResolvedValue(undefined),
+    commitAll: vi.fn().mockResolvedValue(true),
     push: vi.fn().mockResolvedValue(undefined),
     getChangedFiles: vi.fn().mockResolvedValue(['src/index.ts']),
   }
@@ -243,6 +243,40 @@ describe('IssueProcessor', () => {
     await processor.processIssue(repo, issue)
 
     expect(state.markIssueProcessed).toHaveBeenCalledWith('acme/api', 42)
+  })
+
+  it('stops before PR creation when there is nothing to commit', async () => {
+    git.commitAll.mockResolvedValue(false)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(result.success).toBe(false)
+    expect(github.createPullRequest).not.toHaveBeenCalled()
+    expect(github.createDraftPullRequest).not.toHaveBeenCalled()
+    expect(github.postIssueComment).toHaveBeenCalledWith(
+      'acme',
+      'api',
+      42,
+      expect.stringMatching(/no commit|no PR/i),
+    )
+    expect(state.markIssueProcessed).not.toHaveBeenCalled()
+  })
+
+  it('fails before PR creation when push fails', async () => {
+    git.push.mockRejectedValue(new Error('push failed'))
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(result.success).toBe(false)
+    expect(github.createPullRequest).not.toHaveBeenCalled()
+    expect(github.createDraftPullRequest).not.toHaveBeenCalled()
+    expect(github.postIssueComment).toHaveBeenCalledWith(
+      'acme',
+      'api',
+      42,
+      expect.stringMatching(/failed before opening a PR|push failed/i),
+    )
+    expect(state.markIssueProcessed).not.toHaveBeenCalled()
   })
 
   it('AI total failure: creates draft PR with ai-failed label and posts error comment, still cleans up', async () => {

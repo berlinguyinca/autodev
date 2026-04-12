@@ -57,6 +57,18 @@ describe('loadConfig', () => {
     expect(config.repos[0]?.testCommand).toBe('pnpm test')
   })
 
+  it('preserves cloneUrl when specified', () => {
+    const configPath = makeTempPath('repos.json')
+    writeFileSync(
+      configPath,
+      JSON.stringify({ repos: [{ owner: 'acme', name: 'api', cloneUrl: '/tmp/acme-api.git' }] })
+    )
+
+    const config = loadConfig(configPath)
+
+    expect(config.repos[0]?.cloneUrl).toBe('/tmp/acme-api.git')
+  })
+
   it('defaults ollamaModel to "qwen2.5-coder:latest" when not specified', () => {
     const configPath = makeTempPath('repos.json')
     writeFileSync(configPath, JSON.stringify({ repos: [] }))

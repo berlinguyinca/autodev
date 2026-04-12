@@ -33,7 +33,7 @@ export async function run(argv: string[] = process.argv.slice(2)): Promise<numbe
   }
 
   const config = loadConfig(configPath)
-  const state = new StateManager('.pipeline-state.json')
+  const state = new StateManager('.pipeline-state.json', config.quotaLimits)
   const github = new GitHubClient(token)
   const ai = new AIRouter(state, {
     claude: new ClaudeWrapper(),

@@ -54,9 +54,21 @@ function runGit(args: string[], cwd?: string): Promise<string> {
   })
 }
 
+function isLocalGitUrl(url: string): boolean {
+  return url.startsWith('/') || url.startsWith('./') || url.startsWith('../') || url.startsWith('file://')
+}
+
 export class GitOperations {
-  async clone(url: string, targetDir: string): Promise<void> {
-    await runGit(['clone', '--depth', '1', url, targetDir])
+  async clone(url: string, targetDir: string, branch = 'main'): Promise<void> {
+    try {
+      await runGit(['clone', '--depth', '1', '--branch', branch, url, targetDir])
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      if (!isLocalGitUrl(url) || !message.includes('Remote branch')) {
+        throw err
+      }
+      await runGit(['clone', '--depth', '1', url, targetDir])
+    }
     // Set git identity for commits in CI-like environments
     await runGit(['config', 'user.email', 'pipeline@gh-issue-pipeline'], targetDir)
     await runGit(['config', 'user.name', 'GH Issue Pipeline'], targetDir)
@@ -66,17 +78,18 @@ export class GitOperations {
     await runGit(['checkout', '-b', branchName], dir)
   }
 
-  async commitAll(dir: string, message: string): Promise<void> {
+  async commitAll(dir: string, message: string): Promise<boolean> {
     await runGit(['add', '-A'], dir)
     try {
       await runGit(['commit', '-m', message], dir)
+      return true
     } catch (err: unknown) {
       // "nothing to commit" is not an error — treat it as success
       if (err instanceof Error) {
         const gitErr = err as { stderr?: string; stdout?: string }
         const combined = `${gitErr.stderr ?? ''} ${gitErr.stdout ?? ''}`
         if (combined.includes('nothing to commit')) {
-          return
+          return false
         }
       }
       throw err
@@ -87,9 +100,9 @@ export class GitOperations {
     await runGit(['push', '--set-upstream', 'origin', branchName], dir)
   }
 
-  async getChangedFiles(dir: string): Promise<string[]> {
+  async getChangedFiles(dir: string, baseRef = 'HEAD~1'): Promise<string[]> {
     try {
-      const output = await runGit(['diff', '--name-only', 'HEAD~1'], dir)
+      const output = await runGit(['diff', '--name-only', `${baseRef}...HEAD`], dir)
       return output
         .split('\n')
         .map((f) => f.trim())

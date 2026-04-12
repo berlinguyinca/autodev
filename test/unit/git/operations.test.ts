@@ -114,14 +114,14 @@ describe('GitOperations', () => {
   })
 
   describe('clone', () => {
-    it('spawns git clone --depth 1 <url> <targetDir>', async () => {
+    it('spawns git clone --depth 1 --branch <branch> <url> <targetDir>', async () => {
       spawnMock.mockReturnValue(makeFakeChild({ exitCode: 0 }))
 
-      await git.clone('https://github.com/acme/api.git', '/tmp/clone-dir')
+      await git.clone('https://github.com/acme/api.git', '/tmp/clone-dir', 'develop')
 
       expect(spawnMock).toHaveBeenCalledWith(
         'git',
-        ['clone', '--depth', '1', 'https://github.com/acme/api.git', '/tmp/clone-dir'],
+        ['clone', '--depth', '1', '--branch', 'develop', 'https://github.com/acme/api.git', '/tmp/clone-dir'],
         expect.any(Object)
       )
     })
@@ -145,7 +145,7 @@ describe('GitOperations', () => {
     it('spawns git add -A then git commit -m <message> with cwd=dir', async () => {
       spawnMock.mockReturnValue(makeFakeChild({ exitCode: 0 }))
 
-      await git.commitAll('/tmp/repo', 'fix: resolve the bug')
+      await expect(git.commitAll('/tmp/repo', 'fix: resolve the bug')).resolves.toBe(true)
 
       expect(spawnMock).toHaveBeenCalledTimes(2)
       expect(spawnMock).toHaveBeenNthCalledWith(
@@ -169,7 +169,7 @@ describe('GitOperations', () => {
           makeFakeChild({ exitCode: 1, stdout: 'nothing to commit, working tree clean' })
         ) // git commit exits 1 with stdout message (real git behavior)
 
-      await expect(git.commitAll('/tmp/repo', 'empty commit')).resolves.toBeUndefined()
+      await expect(git.commitAll('/tmp/repo', 'empty commit')).resolves.toBe(false)
     })
   })
 
@@ -197,16 +197,16 @@ describe('GitOperations', () => {
   })
 
   describe('getChangedFiles', () => {
-    it('spawns git diff --name-only HEAD~1 and returns string[]', async () => {
+    it('spawns git diff --name-only <baseRef>...HEAD and returns string[]', async () => {
       spawnMock.mockReturnValue(
         makeFakeChild({ stdout: 'src/index.ts\nsrc/utils.ts\n', exitCode: 0 })
       )
 
-      const files = await git.getChangedFiles('/tmp/repo')
+      const files = await git.getChangedFiles('/tmp/repo', 'origin/main')
 
       expect(spawnMock).toHaveBeenCalledWith(
         'git',
-        ['diff', '--name-only', 'HEAD~1'],
+        ['diff', '--name-only', 'origin/main...HEAD'],
         expect.objectContaining({ cwd: '/tmp/repo' })
       )
       expect(files).toEqual(['src/index.ts', 'src/utils.ts'])

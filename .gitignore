@@ -4,3 +4,4 @@ coverage/
 .pipeline-state.json
 *.log
 .DS_Store
+.omx/

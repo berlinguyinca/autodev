@@ -177,9 +177,11 @@ function startFakeGitHubServer(): Promise<FakeServer> {
     json(404, { message: 'Not Found' })
   }
 
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     const server = createServer(handler)
+    server.once('error', reject)
     server.listen(0, '127.0.0.1', () => {
+      server.off('error', reject)
       const addr = server.address()
       const port = typeof addr === 'object' && addr !== null ? addr.port : 0
       resolve({
@@ -212,9 +214,10 @@ function makeFakeAIProvider(model: AIModel): AIProvider {
       const data = { spec: 'Implement fix for widget issue', comments: [] } as unknown as T
       return { success: true, data, rawOutput: JSON.stringify(data) }
     },
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async invokeAgent(_prompt: string, _workingDir: string): Promise<AgentResult> {
-      return { success: true, filesWritten: [], stdout: 'Done', stderr: '' }
+    async invokeAgent(_prompt: string, workingDir: string): Promise<AgentResult> {
+      const writtenFile = join(workingDir, 'widget.ts')
+      writeFileSync(writtenFile, 'export const widget = "fixed"\n')
+      return { success: true, filesWritten: [writtenFile], stdout: 'Done', stderr: '' }
     },
   }
 }
@@ -227,7 +230,7 @@ describe('PipelineRunner E2E — fully local environment', () => {
   let tempDir: string
   let bareRepoDir: string
   let statePath: string
-  let fakeServer: FakeServer
+  let fakeServer: FakeServer | null
 
   beforeEach(async () => {
     tempDir = makeTempDir()
@@ -239,7 +242,9 @@ describe('PipelineRunner E2E — fully local environment', () => {
   })
 
   afterEach(async () => {
-    await fakeServer.close()
+    if (fakeServer !== null) {
+      await fakeServer.close()
+    }
     if (existsSync(tempDir)) {
       rmSync(tempDir, { recursive: true, force: true })
     }
@@ -247,6 +252,9 @@ describe('PipelineRunner E2E — fully local environment', () => {
 
   it('processes issue #1: marks as processed, POSTs PR, POSTs comment, returns exit code 0', async () => {
     const state = new StateManager(statePath)
+    if (fakeServer === null) {
+      throw new Error('Fake server failed to start')
+    }
     const github = new GitHubClient('fake-token', fakeServer.baseUrl)
 
     const fakeProvider = makeFakeAIProvider('claude')
@@ -296,6 +304,9 @@ describe('PipelineRunner E2E — fully local environment', () => {
     // Pre-mark the issue as processed
     state.markIssueProcessed('local/test-repo', 1)
 
+    if (fakeServer === null) {
+      throw new Error('Fake server failed to start')
+    }
     const github = new GitHubClient('fake-token', fakeServer.baseUrl)
     const ai = new AIRouter(state, {
       claude: makeFakeAIProvider('claude'),

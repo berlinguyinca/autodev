@@ -109,6 +109,17 @@ describe('StateManager', () => {
 
       expect(sm.getAvailableModel()).toBe('ollama')
     })
+
+    it('uses configured quota limits when provided', () => {
+      const sm = new StateManager(makeTempStatePath(), { claude: 1, codex: 2 })
+
+      sm.incrementUsage('claude')
+      expect(sm.getAvailableModel()).toBe('codex')
+
+      sm.incrementUsage('codex')
+      sm.incrementUsage('codex')
+      expect(sm.getAvailableModel()).toBe('ollama')
+    })
   })
 
   describe('incrementUsage', () => {

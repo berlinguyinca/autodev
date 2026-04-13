@@ -258,7 +258,7 @@ describe('OllamaWrapper', () => {
 
 // ---------------------------------------------------------------------------
 // Timeout tests (cross-wrapper)
-// Use a very short real timeout (50ms) with a process that never closes.
+// The adaptive timeout uses a 5s polling interval, so we use fake timers.
 // ---------------------------------------------------------------------------
 
 describe('timeout behavior', () => {
@@ -267,6 +267,7 @@ describe('timeout behavior', () => {
   })
 
   it('throws AITimeoutError when timeout is exceeded (claude structured)', async () => {
+    vi.useFakeTimers()
     // Process that never emits close
     const proc = new EventEmitter() as ChildProcess & {
       stdout: EventEmitter
@@ -279,10 +280,17 @@ describe('timeout behavior', () => {
     spawnMock.mockReturnValue(proc)
 
     const claude = new ClaudeWrapper(50)
-    await expect(claude.invokeStructured('prompt', {})).rejects.toThrow(AITimeoutError)
-  }, 3000)
+    const promise = claude.invokeStructured('prompt', {})
+
+    // Advance past the 5s polling interval so the adaptive timeout fires
+    vi.advanceTimersByTime(5_100)
+
+    await expect(promise).rejects.toThrow(AITimeoutError)
+    vi.useRealTimers()
+  }, 10_000)
 
   it('throws AITimeoutError when timeout is exceeded (codex agent)', async () => {
+    vi.useFakeTimers()
     const proc = new EventEmitter() as ChildProcess & {
       stdout: EventEmitter
       stderr: EventEmitter
@@ -294,6 +302,11 @@ describe('timeout behavior', () => {
     spawnMock.mockReturnValue(proc)
 
     const codex = new CodexWrapper(50, 50)
-    await expect(codex.invokeAgent('prompt', '/tmp')).rejects.toThrow(AITimeoutError)
-  }, 3000)
+    const promise = codex.invokeAgent('prompt', '/tmp')
+
+    vi.advanceTimersByTime(5_100)
+
+    await expect(promise).rejects.toThrow(AITimeoutError)
+    vi.useRealTimers()
+  }, 10_000)
 })

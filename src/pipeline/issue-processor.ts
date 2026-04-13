@@ -1,8 +1,9 @@
-import type { RepoConfig, Issue, ProcessingResult, ReviewComment, AIModel } from '../types/index.js'
+import type { RepoConfig, Issue, ProcessingResult, ReviewComment, AIModel, PipelinePhase } from '../types/index.js'
 import type { GitHubClient } from '../github/client.js'
 import type { AIRouter } from '../ai/router.js'
 import type { GitOperations } from '../git/operations.js'
 import type { StateManager } from '../config/state.js'
+import type { TaskTracker } from '../tui/task-tracker.js'
 import { createTempDir, cleanupTempDir, buildBranchName } from '../git/index.js'
 import { buildSpecPrompt, buildImplementationPrompt, buildReviewPrompt, buildFollowUpPrompt } from './prompts.js'
 import { detectTestCommand, runTests } from './test-runner.js'
@@ -13,7 +14,29 @@ export class IssueProcessor {
     private readonly ai: AIRouter,
     private readonly git: GitOperations,
     private readonly state: StateManager,
+    private readonly tracker?: TaskTracker,
   ) {}
+
+  private taskId(repo: RepoConfig, issue: Issue, phase: PipelinePhase): string {
+    return `${repo.owner}/${repo.name}#${issue.number}:${phase}`
+  }
+
+  private emitStart(
+    repo: RepoConfig,
+    issue: Issue,
+    phase: PipelinePhase,
+    provider: AIModel,
+  ): string {
+    const id = this.taskId(repo, issue, phase)
+    this.tracker?.start({
+      id,
+      repo: `${repo.owner}/${repo.name}`,
+      issueNumber: issue.number,
+      phase,
+      provider,
+    })
+    return id
+  }
 
   private async postStatusComment(
     repo: RepoConfig,
@@ -87,6 +110,7 @@ export class IssueProcessor {
       // 5. AI Call 1: generate spec
       let specText = ''
       try {
+        const specTaskId = this.emitStart(repo, issue, 'specGeneration', 'claude')
         const specPrompt = buildSpecPrompt(issue)
         const specResult = await this.ai.invokeStructured<{ spec: string }>(specPrompt, {
           type: 'object',
@@ -94,18 +118,25 @@ export class IssueProcessor {
         })
         modelUsed = specResult.model
         specText = specResult.data?.spec ?? specResult.rawOutput
+        this.tracker?.complete(specTaskId)
       } catch (err) {
         aiFailure = err instanceof Error ? err : new Error(String(err))
+        const failId = this.taskId(repo, issue, 'specGeneration')
+        this.tracker?.fail(failId, aiFailure.message)
       }
 
       // 6. AI Call 2: implement (invokeAgent with workingDir)
       if (aiFailure === null) {
         try {
+          const implTaskId = this.emitStart(repo, issue, 'implementation', modelUsed)
           const implPrompt = buildImplementationPrompt(specText, `${repo.owner}/${repo.name}`)
           const implResult = await this.ai.invokeAgent(implPrompt, tempDir)
           modelUsed = implResult.model
+          this.tracker?.complete(implTaskId)
         } catch (err) {
           aiFailure = err instanceof Error ? err : new Error(String(err))
+          const failId = this.taskId(repo, issue, 'implementation')
+          this.tracker?.fail(failId, aiFailure.message)
         }
       }
 
@@ -113,8 +144,14 @@ export class IssueProcessor {
       if (aiFailure === null) {
         const testCommand = detectTestCommand(tempDir, repo)
         if (testCommand !== null) {
+          const testTaskId = this.emitStart(repo, issue, 'testRun', modelUsed)
           const testResult = runTests(tempDir, testCommand)
           testsPassed = testResult.passed
+          if (testsPassed) {
+            this.tracker?.complete(testTaskId)
+          } else {
+            this.tracker?.fail(testTaskId, 'Tests failed')
+          }
         }
       }
 
@@ -142,9 +179,12 @@ export class IssueProcessor {
       }
 
       // 9. Push branch
+      const pushTaskId = this.emitStart(repo, issue, 'push', modelUsed)
       await this.git.push(tempDir, branchName)
+      this.tracker?.complete(pushTaskId)
 
       // 10. Create PR (regular or draft based on test result and AI failure)
+      const prTaskId = this.emitStart(repo, issue, 'prCreation', modelUsed)
       const prTitle = `[AI] ${issue.title}`
       const prBody = aiFailure !== null
         ? `Automated implementation attempt for issue #${issue.number}.\n\n⚠️ AI invocation failed: ${aiFailure.message}`
@@ -170,6 +210,7 @@ export class IssueProcessor {
 
       prUrl = prResult.url
       prNumber = prResult.number
+      this.tracker?.complete(prTaskId)
 
       // 11. Add ai-generated label
       await this.github.addLabel(repo.owner, repo.name, prNumber, 'ai-generated')
@@ -183,6 +224,7 @@ export class IssueProcessor {
       let reviewComments: ReviewComment[] = []
       if (aiFailure === null) {
         try {
+          const reviewTaskId = this.emitStart(repo, issue, 'review', modelUsed)
           const diff = await this.github.getPRDiff(repo.owner, repo.name, prNumber)
           const reviewPrompt = buildReviewPrompt(diff)
           const reviewResult = await this.ai.invokeStructured<{ comments: ReviewComment[] }>(
@@ -191,8 +233,11 @@ export class IssueProcessor {
           )
           modelUsed = reviewResult.model
           reviewComments = reviewResult.data?.comments ?? []
+          this.tracker?.complete(reviewTaskId)
         } catch {
           // Review failure is non-fatal
+          const failId = this.taskId(repo, issue, 'review')
+          this.tracker?.fail(failId, 'Review failed (non-fatal)')
         }
 
         // 13. Post review comments
@@ -205,9 +250,11 @@ export class IssueProcessor {
 
           // 14. AI Call 4: address review (invokeAgent with workingDir)
           try {
+            const followUpTaskId = this.emitStart(repo, issue, 'followUp', modelUsed)
             const followUpPrompt = buildFollowUpPrompt(reviewComments)
             const followUpResult = await this.ai.invokeAgent(followUpPrompt, tempDir)
             modelUsed = followUpResult.model
+            this.tracker?.complete(followUpTaskId)
 
             // 15. Commit and push follow-up
             const committedFollowUp = await this.git.commitAll(tempDir, `ai: address review comments for #${issue.number}`)
@@ -216,6 +263,8 @@ export class IssueProcessor {
             }
           } catch {
             // non-fatal follow-up failure
+            const failId = this.taskId(repo, issue, 'followUp')
+            this.tracker?.fail(failId, 'Follow-up failed (non-fatal)')
           }
         }
       }

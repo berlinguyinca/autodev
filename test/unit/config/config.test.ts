@@ -155,4 +155,88 @@ describe('loadConfig', () => {
     expect(config.quotaLimits?.claude).toBeUndefined()
     expect(config.quotaLimits?.codex).toBe(30)
   })
+
+  // --- providers.*.timeoutMs / timeoutExtensionMs ---
+
+  it('parses providers.claude.timeoutMs correctly', () => {
+    const configPath = makeTempPath('repos.json')
+    writeFileSync(configPath, JSON.stringify({
+      repos: [],
+      providers: { claude: { timeoutMs: 300000 } },
+    }))
+
+    const config = loadConfig(configPath)
+
+    expect(config.providers?.claude?.timeoutMs).toBe(300000)
+  })
+
+  it('parses providers.claude.timeoutExtensionMs correctly', () => {
+    const configPath = makeTempPath('repos.json')
+    writeFileSync(configPath, JSON.stringify({
+      repos: [],
+      providers: { claude: { timeoutMs: 120000, timeoutExtensionMs: 60000 } },
+    }))
+
+    const config = loadConfig(configPath)
+
+    expect(config.providers?.claude?.timeoutMs).toBe(120000)
+    expect(config.providers?.claude?.timeoutExtensionMs).toBe(60000)
+  })
+
+  it('parses providers for all three models', () => {
+    const configPath = makeTempPath('repos.json')
+    writeFileSync(configPath, JSON.stringify({
+      repos: [],
+      providers: {
+        claude: { timeoutMs: 100000 },
+        codex: { timeoutMs: 200000 },
+        ollama: { timeoutMs: 50000 },
+      },
+    }))
+
+    const config = loadConfig(configPath)
+
+    expect(config.providers?.claude?.timeoutMs).toBe(100000)
+    expect(config.providers?.codex?.timeoutMs).toBe(200000)
+    expect(config.providers?.ollama?.timeoutMs).toBe(50000)
+  })
+
+  it('omits providers when not specified in config', () => {
+    const configPath = makeTempPath('repos.json')
+    writeFileSync(configPath, JSON.stringify({ repos: [] }))
+
+    const config = loadConfig(configPath)
+
+    expect(config.providers).toBeUndefined()
+  })
+
+  it('rejects invalid timeout values (negative)', () => {
+    const configPath = makeTempPath('repos.json')
+    writeFileSync(configPath, JSON.stringify({
+      repos: [],
+      providers: { claude: { timeoutMs: -1 } },
+    }))
+
+    expect(() => loadConfig(configPath)).toThrow(/timeoutMs/)
+  })
+
+  it('rejects invalid timeout values (non-integer)', () => {
+    const configPath = makeTempPath('repos.json')
+    writeFileSync(configPath, JSON.stringify({
+      repos: [],
+      providers: { claude: { timeoutMs: 1.5 } },
+    }))
+
+    expect(() => loadConfig(configPath)).toThrow(/timeoutMs/)
+  })
+
+  it('rejects invalid timeout values (zero)', () => {
+    const configPath = makeTempPath('repos.json')
+    writeFileSync(configPath, JSON.stringify({
+      repos: [],
+      providers: { claude: { timeoutMs: 0 } },
+    }))
+
+    expect(() => loadConfig(configPath)).toThrow(/timeoutMs/)
+  })
 })

@@ -27,6 +27,11 @@ export interface PipelineConfig {
     claude?: number;
     codex?: number;
   };
+  providers?: {
+    claude?: ProviderConfig;
+    codex?: ProviderConfig;
+    ollama?: ProviderConfig;
+  };
 }
 
 export interface QuotaState {
@@ -81,6 +86,38 @@ export interface ProcessingResult {
   modelUsed: AIModel;
   filesChanged: string[];
   error?: string;
+}
+
+// Task monitoring types
+export type TaskStatus = 'pending' | 'running' | 'success' | 'failed' | 'killed' | 'timeout';
+
+export type PipelinePhase =
+  | 'specGeneration'
+  | 'implementation'
+  | 'review'
+  | 'followUp'
+  | 'testRun'
+  | 'push'
+  | 'prCreation';
+
+export interface TaskState {
+  id: string;
+  repo: string;
+  issueNumber: number;
+  phase: PipelinePhase;
+  status: TaskStatus;
+  provider: AIModel;
+  startedAt: number;
+  lastActivityAt: number;
+  bytesReceived: number;
+  pid?: number;
+  error?: string;
+}
+
+// Provider config types
+export interface ProviderConfig {
+  timeoutMs?: number;
+  timeoutExtensionMs?: number;
 }
 
 // Provider interfaces

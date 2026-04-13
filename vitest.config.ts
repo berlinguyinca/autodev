@@ -21,6 +21,8 @@ export default defineConfig({
         "src/github/index.ts",
         "src/pipeline/index.ts",
         "src/types/index.ts",
+        "src/tui/index.ts",
+        "src/tui/renderer.ts",
         "**/*.d.ts",
         "vitest.config.ts",
         "eslint.config.js",

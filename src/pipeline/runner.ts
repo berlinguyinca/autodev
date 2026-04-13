@@ -2,6 +2,7 @@ import type { StateManager } from '../config/state.js'
 import type { GitHubClient } from '../github/client.js'
 import type { AIRouter } from '../ai/router.js'
 import type { PipelineConfig } from '../types/index.js'
+import type { TaskTracker } from '../tui/task-tracker.js'
 import { IssueProcessor } from './issue-processor.js'
 import { GitOperations } from '../git/index.js'
 
@@ -13,8 +14,9 @@ export class PipelineRunner {
     private readonly github: GitHubClient,
     private readonly ai: AIRouter,
     private readonly state: StateManager,
+    tracker?: TaskTracker,
   ) {
-    this.processor = new IssueProcessor(github, ai, new GitOperations(), state)
+    this.processor = new IssueProcessor(github, ai, new GitOperations(), state, tracker)
   }
 
   async run(): Promise<number> {

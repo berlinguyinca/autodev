@@ -1,12 +1,18 @@
 import { spawn } from 'node:child_process'
 import { AITimeoutError, AIBinaryNotFoundError, AIInvocationError } from './errors.js'
 
+const ACTIVITY_CHECK_INTERVAL_MS = 5_000
+
 export interface InvokeProcessOptions {
   command: string
   args: string[]
   cwd?: string
   timeoutMs: number
+  /** How much silent time to allow before killing — defaults to timeoutMs. */
+  timeoutExtensionMs?: number
   model: string
+  /** Called whenever the subprocess writes to stdout or stderr. */
+  onActivity?: (bytes: number) => void
 }
 
 export interface InvokeProcessResult {
@@ -15,7 +21,8 @@ export interface InvokeProcessResult {
 }
 
 export async function invokeProcess(options: InvokeProcessOptions): Promise<InvokeProcessResult> {
-  const { command, args, cwd, timeoutMs, model } = options
+  const { command, args, cwd, timeoutMs, model, onActivity } = options
+  const extensionMs = options.timeoutExtensionMs ?? timeoutMs
 
   return new Promise<InvokeProcessResult>((resolve, reject) => {
     let settled = false
@@ -43,23 +50,38 @@ export async function invokeProcess(options: InvokeProcessOptions): Promise<Invo
       return
     }
 
-    const timer = setTimeout(() => {
-      try {
-        proc.kill()
-      } catch {
-        // best effort
+    let lastActivityTimestamp = Date.now()
+
+    // Adaptive timeout: poll every 5s to check if the process has gone silent
+    // beyond the allowed extension window.
+    const interval = setInterval(() => {
+      if (Date.now() - lastActivityTimestamp > extensionMs) {
+        clearInterval(interval)
+        try {
+          proc.kill()
+        } catch {
+          // best effort
+        }
+        settle(() => reject(new AITimeoutError(model, extensionMs)))
       }
-      settle(() => reject(new AITimeoutError(model, timeoutMs)))
-    }, timeoutMs)
+    }, ACTIVITY_CHECK_INTERVAL_MS)
 
     const stdoutChunks: Buffer[] = []
     const stderrChunks: Buffer[] = []
 
-    proc.stdout?.on('data', (chunk: Buffer) => stdoutChunks.push(chunk))
-    proc.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk))
+    proc.stdout?.on('data', (chunk: Buffer) => {
+      stdoutChunks.push(chunk)
+      lastActivityTimestamp = Date.now()
+      onActivity?.(chunk.length)
+    })
+    proc.stderr?.on('data', (chunk: Buffer) => {
+      stderrChunks.push(chunk)
+      lastActivityTimestamp = Date.now()
+      onActivity?.(chunk.length)
+    })
 
     proc.on('error', (err: NodeJS.ErrnoException) => {
-      clearTimeout(timer)
+      clearInterval(interval)
       if (err.code === 'ENOENT') {
         settle(() => reject(new AIBinaryNotFoundError(command)))
       } else {
@@ -68,7 +90,7 @@ export async function invokeProcess(options: InvokeProcessOptions): Promise<Invo
     })
 
     proc.on('close', (code: number | null) => {
-      clearTimeout(timer)
+      clearInterval(interval)
 
       const stdout = Buffer.concat(stdoutChunks).toString('utf-8')
       const stderr = Buffer.concat(stderrChunks).toString('utf-8')

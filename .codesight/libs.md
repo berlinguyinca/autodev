@@ -35,3 +35,8 @@
   - function detectTestCommand: (dir, repoConfig) => string | null
   - function runTests: (dir, command) => TestResult
   - interface TestResult
+- `src/tui/renderer.ts` — function startTUI: (tracker, onQuit) => void, interface TUIHandle
+- `src/tui/task-tracker.ts`
+  - class TaskTracker
+  - interface TaskStartOptions
+  - type TaskEvent

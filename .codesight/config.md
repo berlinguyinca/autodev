@@ -10,4 +10,5 @@
 
 ## Key Dependencies
 
+- react: ^19.2.5
 - zod: ^3.23.0

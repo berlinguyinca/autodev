@@ -1,6 +1,11 @@
 import { z } from 'zod'
 import { readFileSync } from 'node:fs'
-import type { PipelineConfig, RepoConfig } from '../types/index.js'
+import type { PipelineConfig, RepoConfig, ProviderConfig } from '../types/index.js'
+
+const ProviderConfigSchema = z.object({
+  timeoutMs: z.number().int().positive().optional(),
+  timeoutExtensionMs: z.number().int().positive().optional(),
+})
 
 const RepoConfigSchema = z.object({
   owner: z.string().min(1),
@@ -20,9 +25,24 @@ const PipelineConfigSchema = z.object({
       codex: z.number().int().positive().optional(),
     })
     .optional(),
+  providers: z
+    .object({
+      claude: ProviderConfigSchema.optional(),
+      codex: ProviderConfigSchema.optional(),
+      ollama: ProviderConfigSchema.optional(),
+    })
+    .optional(),
 })
 
 type ZodParsed = z.infer<typeof PipelineConfigSchema>
+
+function toProviderConfig(parsed: z.infer<typeof ProviderConfigSchema> | undefined): ProviderConfig | undefined {
+  if (parsed === undefined) return undefined
+  const cfg: ProviderConfig = {}
+  if (parsed.timeoutMs !== undefined) cfg.timeoutMs = parsed.timeoutMs
+  if (parsed.timeoutExtensionMs !== undefined) cfg.timeoutExtensionMs = parsed.timeoutExtensionMs
+  return Object.keys(cfg).length > 0 ? cfg : undefined
+}
 
 /** Map zod output to our strict PipelineConfig type, dropping undefined optionals. */
 function toTyped(parsed: ZodParsed): PipelineConfig {
@@ -42,6 +62,17 @@ function toTyped(parsed: ZodParsed): PipelineConfig {
     if (parsed.quotaLimits.claude !== undefined) limits.claude = parsed.quotaLimits.claude
     if (parsed.quotaLimits.codex !== undefined) limits.codex = parsed.quotaLimits.codex
     config.quotaLimits = limits
+  }
+
+  if (parsed.providers !== undefined) {
+    const providers: NonNullable<PipelineConfig['providers']> = {}
+    const claude = toProviderConfig(parsed.providers.claude)
+    const codex = toProviderConfig(parsed.providers.codex)
+    const ollama = toProviderConfig(parsed.providers.ollama)
+    if (claude !== undefined) providers.claude = claude
+    if (codex !== undefined) providers.codex = codex
+    if (ollama !== undefined) providers.ollama = ollama
+    if (Object.keys(providers).length > 0) config.providers = providers
   }
 
   return config

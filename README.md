@@ -170,3 +170,64 @@ The pipeline looks for `./repos.json` in the working directory by default. Pass 
 
 **Tests always fail**
 Set `testCommand` explicitly in `repos.json` if the auto-detection does not pick the right command, or if the test suite requires environment setup that the pipeline cannot provide.
+
+## Development
+
+```bash
+pnpm install          # Install dependencies
+pnpm build            # Compile TypeScript to dist/
+pnpm lint             # ESLint over src/ and test/
+pnpm test             # Run all tests (unit + integration)
+pnpm test:unit        # Run unit tests only (test/unit/**)
+pnpm test:integration # Run integration tests only (test/integration/**)
+pnpm test:coverage    # Tests with V8 coverage (80% threshold enforced)
+```
+
+Run a single test file:
+
+```bash
+pnpm vitest run test/unit/pipeline/runner.test.ts
+```
+
+The project is ESM-only (`"type": "module"`), uses NodeNext module resolution, and imports must include `.js` extensions (even for `.ts` source files).
+
+## Project Structure
+
+```
+src/
+  index.ts                   CLI entry point (run → PipelineRunner)
+  types/index.ts             Core domain types and interfaces
+  config/
+    config.ts                Zod-validated config loader (repos.json)
+    state.ts                 Atomic state persistence and quota management
+  ai/
+    base-wrapper.ts          Shared spawn wrapper (invokeProcess)
+    claude-wrapper.ts        Claude CLI adapter
+    codex-wrapper.ts         Codex CLI adapter
+    ollama-wrapper.ts        Ollama CLI adapter
+    router.ts                Quota-aware provider selection
+    errors.ts                AI-specific error types
+  git/
+    operations.ts            Clone, branch, commit, push, cleanup
+  github/
+    client.ts                Octokit wrapper (issues, branches, PRs)
+  pipeline/
+    runner.ts                Top-level loop (repos × issues)
+    issue-processor.ts       Per-issue orchestration (4 AI calls)
+    prompts.ts               AI prompt templates
+    test-runner.ts           Test detection and execution
+
+test/
+  fixtures/                  Fake CLI scripts and sample data
+  unit/                      Unit tests (mirrors src/ structure)
+  integration/               Integration tests
+```
+
+## Technical Notes
+
+- **ESM-only** — `"type": "module"` in `package.json`; imports must include `.js` extensions (even for `.ts` source files).
+- **TypeScript strictness** — `strict`, `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noImplicitOverride`, `noPropertyAccessFromIndexSignature` are all enabled.
+- **Module resolution** — `NodeNext` for both `module` and `moduleResolution`.
+- **Coverage thresholds** — 80% statements, branches, functions, and lines. Index re-export files (`src/*/index.ts`) are excluded from coverage.
+- **Atomic state writes** — `.pipeline-state.json` is written to a `.tmp` file then renamed to prevent corruption.
+- **No runtime build step for tests** — Vitest imports TypeScript directly; no compilation needed before running tests.

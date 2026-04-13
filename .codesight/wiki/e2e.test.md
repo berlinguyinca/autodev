@@ -6,9 +6,9 @@ The E2e.test subsystem handles **2 routes** and touches: auth, ai.
 
 ## Routes
 
-- `POST` `/repos/local/test-repo/pulls` [auth, ai]
+- `POST` `/repos/local/test-repo/pulls` [auth, ai] `[inferred]`
   `test/integration/pipeline/e2e.test.ts`
-- `POST` `/repos/local/test-repo/issues/1/comments` [auth, ai]
+- `POST` `/repos/local/test-repo/issues/1/comments` [auth, ai] `[inferred]`
   `test/integration/pipeline/e2e.test.ts`
 
 ## Source Files

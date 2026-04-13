@@ -83,6 +83,30 @@ export interface ProcessingResult {
   error?: string;
 }
 
+// Statistics types
+
+export interface StatsRecord {
+  id: number;
+  repo: string;
+  issueNumber: number;
+  issueTitle: string;
+  success: boolean;
+  isDraft: boolean;
+  testsPassed: boolean;
+  modelUsed: AIModel | null;
+  filesChanged: number;
+  prUrl: string | null;
+  error: string | null;
+  processedAt: string;   // ISO 8601
+}
+
+export interface StatsSummary {
+  totalIssues: number;
+  totalRepos: number;
+  successRate: number;
+  byRepo: Array<{ repo: string; total: number; succeeded: number; failed: number }>;
+}
+
 // Provider interfaces
 export interface AIProvider {
   model: AIModel;

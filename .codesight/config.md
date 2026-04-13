@@ -10,4 +10,5 @@
 
 ## Key Dependencies
 
+- better-sqlite3: ^12.9.0
 - zod: ^3.23.0

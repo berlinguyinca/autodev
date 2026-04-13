@@ -2,15 +2,16 @@
 
 > **Stack:** raw-http | none | unknown | typescript
 
-> 2 routes | 0 models | 0 components | 15 lib files | 1 env vars | 0 middleware | 100% test coverage
-> **Token savings:** this file is ~1,500 tokens. Without it, AI exploration would cost ~13,000 tokens. **Saves ~11,500 tokens per conversation.**
+> 2 routes (2 inferred) | 0 models | 0 components | 15 lib files | 1 env vars | 0 middleware | 100% test coverage
+> **Token savings:** this file is ~1,500 tokens. Without it, AI exploration would cost ~13,100 tokens. **Saves ~11,600 tokens per conversation.**
+> **Last scanned:** 2026-04-13 18:50 — re-run after significant changes
 
 ---
 
 # Routes
 
-- `POST` `/repos/local/test-repo/pulls` [auth, ai] ✓
-- `POST` `/repos/local/test-repo/issues/1/comments` [auth, ai] ✓
+- `POST` `/repos/local/test-repo/pulls` [auth, ai] `[inferred]` ✓
+- `POST` `/repos/local/test-repo/issues/1/comments` [auth, ai] `[inferred]` ✓
 
 ---
 

@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 pnpm install          # Install dependencies
-pnpm build            # Type-check (tsc --noEmit); no emit step in dev
+pnpm build            # Compile TypeScript to dist/
 pnpm lint             # ESLint over src/ and test/
 pnpm test             # Run all tests (unit + integration)
 pnpm test:unit        # Run unit tests only (test/unit/**)

@@ -10,6 +10,8 @@
   - class AITimeoutError
   - class AIBinaryNotFoundError
   - class AIInvocationError
+- `src/ai/file-scanner.ts` — function scanModifiedFiles: (workingDir, beforeMs) => string[]
+- `src/ai/map-wrapper.ts` — class MAPWrapper
 - `src/ai/ollama-wrapper.ts` — class OllamaWrapper
 - `src/ai/router.ts` — class AIRouter
 - `src/config/config.ts` — function loadConfig: (configPath) => PipelineConfig
@@ -25,12 +27,15 @@
   - interface PRResult
 - `src/index.ts` — function run: (argv) => void
 - `src/pipeline/issue-processor.ts` — class IssueProcessor
+- `src/pipeline/merge-processor.ts` — class MergeProcessor
 - `src/pipeline/prompts.ts`
   - function buildSpecPrompt: (issue) => string
   - function buildImplementationPrompt: (spec, repoName) => string
   - function buildReviewPrompt: (diff) => string
   - function buildFollowUpPrompt: (comments) => string
+  - function buildConflictResolutionPrompt: (conflict) => string
 - `src/pipeline/runner.ts` — class PipelineRunner
+- `src/pipeline/spec-cache.ts` — class SpecCache
 - `src/pipeline/test-runner.ts`
   - function detectTestCommand: (dir, repoConfig) => string | null
   - function runTests: (dir, command) => TestResult

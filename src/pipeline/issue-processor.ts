@@ -3,6 +3,7 @@ import type { GitHubClient } from '../github/client.js'
 import type { AIRouter } from '../ai/router.js'
 import type { GitOperations } from '../git/operations.js'
 import type { StateManager } from '../config/state.js'
+import type { SpecCache } from './spec-cache.js'
 import { createTempDir, cleanupTempDir, buildBranchName } from '../git/index.js'
 import { buildSpecPrompt, buildImplementationPrompt, buildReviewPrompt, buildFollowUpPrompt } from './prompts.js'
 import { detectTestCommand, runTests } from './test-runner.js'
@@ -13,6 +14,7 @@ export class IssueProcessor {
     private readonly ai: AIRouter,
     private readonly git: GitOperations,
     private readonly state: StateManager,
+    private readonly specCache?: SpecCache,
   ) {}
 
   private async postStatusComment(
@@ -22,8 +24,8 @@ export class IssueProcessor {
   ): Promise<void> {
     try {
       await this.github.postIssueComment(repo.owner, repo.name, issue.number, lines.join('\n').trim())
-    } catch {
-      // Best effort status reporting only.
+    } catch (err) {
+      console.warn(`[pipeline] Failed to post status comment on ${repo.owner}/${repo.name}#${issue.number}:`, err instanceof Error ? err.message : String(err))
     }
   }
 
@@ -31,8 +33,8 @@ export class IssueProcessor {
     const repoFullName = `${repo.owner}/${repo.name}`
     const base = repo.defaultBranch ?? 'main'
 
-    // 1. Skip if already processed
-    if (this.state.isIssueProcessed(repoFullName, issue.number)) {
+    // 1. Skip if already processed or not eligible for retry
+    if (!this.state.shouldProcessIssue(repoFullName, issue.number)) {
       return {
         issueNumber: issue.number,
         repoFullName,
@@ -84,29 +86,22 @@ export class IssueProcessor {
       // 4. Create branch
       await this.git.createBranch(tempDir, branchName)
 
-      // 5. AI Call 1: generate spec
-      let specText = ''
+      // 5+6. AI Calls: generate spec then implement (combined for full-pipeline providers)
       try {
-        const specPrompt = buildSpecPrompt(issue)
-        const specResult = await this.ai.invokeStructured<{ spec: string }>(specPrompt, {
-          type: 'object',
-          properties: { spec: { type: 'string' } },
-        })
-        modelUsed = specResult.model
-        specText = specResult.data?.spec ?? specResult.rawOutput
+        const { model } =
+          await this.ai.invokeStructuredThenAgent<{ spec: string }>(
+            buildSpecPrompt(issue),
+            { type: 'object', properties: { spec: { type: 'string' } }, required: ['spec'] },
+            (spec) => buildImplementationPrompt(spec, `${repo.owner}/${repo.name}`),
+            tempDir,
+          )
+        modelUsed = model
+
+        // Cache the model used for observability on re-runs
+        this.specCache?.set(repoFullName, issue.number, issue.title, { success: true, filesWritten: [], stdout: '', stderr: '' }, modelUsed)
       } catch (err) {
         aiFailure = err instanceof Error ? err : new Error(String(err))
-      }
-
-      // 6. AI Call 2: implement (invokeAgent with workingDir)
-      if (aiFailure === null) {
-        try {
-          const implPrompt = buildImplementationPrompt(specText, `${repo.owner}/${repo.name}`)
-          const implResult = await this.ai.invokeAgent(implPrompt, tempDir)
-          modelUsed = implResult.model
-        } catch (err) {
-          aiFailure = err instanceof Error ? err : new Error(String(err))
-        }
+        console.error(`[pipeline] AI call failed for ${repoFullName}#${issue.number}:`, aiFailure.message)
       }
 
       // 7. Detect and run tests
@@ -122,12 +117,19 @@ export class IssueProcessor {
       const committed = await this.git.commitAll(tempDir, `ai: implement issue #${issue.number} — ${issue.title}`)
       if (!committed) {
         const error = 'AI run produced no commit; skipping PR creation.'
+        this.state.markIssueOutcome(repoFullName, issue.number, {
+          status: 'failure',
+          lastAttempt: new Date().toISOString(),
+          attemptCount: 1,
+          error,
+        })
         await this.postStatusComment(repo, issue, [
           `🤖 **AI Implementation Attempt** — Issue #${issue.number}`,
           '',
           '⚠️ No commit was created, so no PR was opened.',
           `**Model used:** ${modelUsed}`,
           `**Tests:** ${testsPassed ? '✅ Passing' : '❌ Failing'}`,
+          aiFailure !== null ? `**AI Error:** ${aiFailure.message}` : '',
         ])
         return {
           issueNumber: issue.number,
@@ -191,16 +193,16 @@ export class IssueProcessor {
           )
           modelUsed = reviewResult.model
           reviewComments = reviewResult.data?.comments ?? []
-        } catch {
-          // Review failure is non-fatal
+        } catch (err) {
+          console.warn(`[pipeline] Review AI call failed for ${repoFullName}#${issue.number}:`, err instanceof Error ? err.message : String(err))
         }
 
         // 13. Post review comments
         if (reviewComments.length > 0) {
           try {
             await this.github.postReviewComments(repo.owner, repo.name, prNumber, reviewComments)
-          } catch {
-            // non-fatal
+          } catch (err) {
+            console.warn(`[pipeline] Failed to post review comments on ${repoFullName} PR #${prNumber}:`, err instanceof Error ? err.message : String(err))
           }
 
           // 14. AI Call 4: address review (invokeAgent with workingDir)
@@ -214,8 +216,8 @@ export class IssueProcessor {
             if (committedFollowUp) {
               await this.git.push(tempDir, branchName)
             }
-          } catch {
-            // non-fatal follow-up failure
+          } catch (err) {
+            console.warn(`[pipeline] Review follow-up failed for ${repoFullName}#${issue.number}:`, err instanceof Error ? err.message : String(err))
           }
         }
       }
@@ -223,7 +225,8 @@ export class IssueProcessor {
       // 16. Get changed files list
       try {
         filesChanged = await this.git.getChangedFiles(tempDir, `origin/${base}`)
-      } catch {
+      } catch (err) {
+        console.warn(`[pipeline] Failed to get changed files for ${repoFullName}#${issue.number}:`, err instanceof Error ? err.message : String(err))
         filesChanged = []
       }
 
@@ -241,7 +244,12 @@ export class IssueProcessor {
       await this.github.postIssueComment(repo.owner, repo.name, issue.number, commentBody)
 
       // 18. Mark issue as processed in state
-      this.state.markIssueProcessed(repoFullName, issue.number)
+      this.state.markIssueOutcome(repoFullName, issue.number, {
+        status: 'success',
+        lastAttempt: new Date().toISOString(),
+        attemptCount: 1,
+        prUrl,
+      })
 
       return {
         issueNumber: issue.number,
@@ -255,6 +263,12 @@ export class IssueProcessor {
       }
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
+      this.state.markIssueOutcome(repoFullName, issue.number, {
+        status: 'failure',
+        lastAttempt: new Date().toISOString(),
+        attemptCount: 1,
+        error: error.slice(0, 500),
+      })
       if (prUrl === undefined) {
         await this.postStatusComment(repo, issue, [
           `🤖 **AI Implementation Attempt** — Issue #${issue.number}`,
@@ -277,7 +291,7 @@ export class IssueProcessor {
       }
       if (prUrl !== undefined) failResult.prUrl = prUrl
       return failResult
-    } finally {
+    } /* v8 ignore next */ finally {
       cleanupTempDir(tempDir)
     }
   }

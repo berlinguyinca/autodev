@@ -1,9 +1,26 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { writeFileSync, mkdtempSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { detectTestCommand, runTests } from '../../../src/pipeline/test-runner.js'
 import type { RepoConfig } from '../../../src/types/index.js'
+
+// ---------------------------------------------------------------------------
+// Partial mock of node:child_process so we can override execSync for specific
+// tests while keeping the real implementation for integration-style tests.
+// ---------------------------------------------------------------------------
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>()
+  return {
+    ...actual,
+    execSync: vi.fn((...args: Parameters<typeof actual.execSync>) => actual.execSync(...args)),
+  }
+})
+
+import { execSync } from 'node:child_process'
+import { detectTestCommand, runTests } from '../../../src/pipeline/test-runner.js'
+
+const execSyncMock = vi.mocked(execSync)
 
 function makeTempDir(): string {
   return mkdtempSync(join(tmpdir(), 'test-runner-test-'))
@@ -95,6 +112,37 @@ describe('runTests', () => {
   it('output field is a string on failure', () => {
     const dir = makeTempDir()
     const result = runTests(dir, 'false')
+    expect(typeof result.output).toBe('string')
+  })
+
+  it('captures stderr output when command fails with stderr output', () => {
+    const dir = makeTempDir()
+    // sh -c exits with code 1 and writes to stderr
+    const result = runTests(dir, 'sh -c "echo test-error >&2; exit 1"')
+    expect(result.passed).toBe(false)
+    expect(result.output).toContain('test-error')
+  })
+
+  it('captures stdout output when command fails with stdout output', () => {
+    const dir = makeTempDir()
+    // Command writes to stdout then fails
+    const result = runTests(dir, 'sh -c "echo stdout-output; exit 1"')
+    expect(result.passed).toBe(false)
+    expect(result.output).toContain('stdout-output')
+  })
+
+  it('handles error without stderr/stdout properties gracefully (defensive branches)', () => {
+    const dir = makeTempDir()
+    // Simulate an error that has no stderr or stdout Buffer properties
+    // (covers the ?? '' fallback branches at lines 65-66)
+    execSyncMock.mockImplementationOnce(() => {
+      const err = new Error('command failed without output buffers')
+      // Intentionally omit stderr/stdout so the defensive ternary falls to ''
+      throw err
+    })
+
+    const result = runTests(dir, 'irrelevant')
+    expect(result.passed).toBe(false)
     expect(typeof result.output).toBe('string')
   })
 })

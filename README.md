@@ -1,115 +1,192 @@
 # gh-issue-pipeline
 
-An autonomous pipeline that fetches open GitHub issues, generates a specification, implements changes using an AI coding assistant (Claude, Codex, or Ollama), runs the project's test suite, opens a pull request, and posts a self-review with follow-up fixes — all without human intervention.
+Autonomous pipeline that reads open GitHub issues and turns them into pull requests using AI. Point it at your repos, and it will generate specs, write code, run tests, open PRs, self-review, and address its own review comments -- all without human intervention.
 
-Safe to run on a cron schedule: tracks processed issues and monthly AI quota usage in a local state file to prevent duplicate work.
+Safe to run on a cron schedule: tracks processed issues and monthly AI quota in a local state file to prevent duplicate work.
 
-## Prerequisites
+## Requirements
 
 - [Node.js 22+](https://nodejs.org/)
 - [pnpm](https://pnpm.io/installation)
-- At least one AI provider CLI:
-  - [claude](https://docs.anthropic.com/en/docs/claude-code) — primary
-  - [codex](https://github.com/openai/codex) — secondary fallback
-  - [ollama](https://ollama.com/) with a code model (e.g., `qwen2.5-coder:latest`) — tertiary fallback, no quota limit
+- A `GITHUB_TOKEN` with `repo` scope
+- At least one AI provider CLI installed (see [AI Providers](#ai-providers))
 
-## Installation
+## Quick start
 
 ```bash
-git clone https://github.com/your-org/gh-issue-pipeline.git
+git clone https://github.com/berlinguyinca/gh-issue-pipeline.git
 cd gh-issue-pipeline
 pnpm install
-pnpm build
-```
 
-## Configuration
+# Copy and edit the config
+cp config.yaml.example config.yaml
+# Edit config.yaml -- add your repos
 
-Create a `repos.json` file in the working directory (or copy the included example):
-
-```json
-{
-  "repos": [
-    {
-      "owner": "your-org",
-      "name": "your-repo",
-      "defaultBranch": "main",
-      "testCommand": "npm test"
-    }
-  ],
-  "ollamaModel": "qwen2.5-coder:latest",
-  "maxIssuesPerRun": 10,
-  "quotaLimits": {
-    "claude": 100,
-    "codex": 50
-  }
-}
-```
-
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `repos` | array | yes | — | Repositories to process |
-| `repos[].owner` | string | yes | — | GitHub organisation or user |
-| `repos[].name` | string | yes | — | Repository name |
-| `repos[].defaultBranch` | string | no | `main` | Base branch for PRs |
-| `repos[].testCommand` | string | no | auto-detected | Command to run tests |
-| `repos[].cloneUrl` | string | no | GitHub HTTPS | Override clone URL (useful for local testing) |
-| `ollamaModel` | string | no | `qwen2.5-coder:latest` | Ollama model name |
-| `maxIssuesPerRun` | number | no | `10` | Max issues to process per invocation |
-| `quotaLimits.claude` | number | no | `100` | Monthly call limit for claude |
-| `quotaLimits.codex` | number | no | `50` | Monthly call limit for codex |
-
-## Environment
-
-| Variable | Required | Description |
-|---|---|---|
-| `GITHUB_TOKEN` | yes | Personal access token with `repo` scope |
-
-## Running
-
-```bash
-GITHUB_TOKEN=ghp_... pnpm start
+# Run the pipeline
+GITHUB_TOKEN=ghp_xxxx pnpm start --config config.yaml
 ```
 
 To use a custom config path:
 
 ```bash
-GITHUB_TOKEN=ghp_... node dist/index.js --config /path/to/repos.json
+GITHUB_TOKEN=ghp_xxxx pnpm start --config /path/to/config.yaml
 ```
 
 ### Cron example (every 4 hours)
 
 ```cron
-0 */4 * * * cd /path/to/gh-issue-pipeline && GITHUB_TOKEN=ghp_... node dist/index.js >> /var/log/gh-pipeline.log 2>&1
+0 */4 * * * cd /path/to/gh-issue-pipeline && GITHUB_TOKEN=ghp_... pnpm start --config config.yaml >> /var/log/gh-pipeline.log 2>&1
 ```
 
-## How It Works
+## How it works
 
-For each open issue across the configured repositories, the pipeline executes up to four AI calls:
+For each open issue across configured repositories, the pipeline runs an 18-step process:
 
 ```
 Issue fetched
-  │
-  ├─ 1. Generate spec      invokeStructured  →  spec document (goal, files, approach, tests)
-  │
-  ├─ 2. Implement          invokeAgent       →  AI writes/modifies files in a local clone
-  │
-  ├─ 3. Review diff        invokeStructured  →  list of ReviewComment (file, line, body)
-  │
-  └─ 4. Address review     invokeAgent       →  AI applies fixes, commits, pushes
+  |
+  +-- 1. Skip if already processed (state file)
+  +-- 2. Check for existing branch/PR conflicts
+  +-- 3. Clone repo to temp directory
+  +-- 4. Create feature branch (ai/{number}-{slug})
+  |
+  +-- 5-6. AI: Generate spec + implement
+  |        (MAP does this atomically; Claude/Codex do spec then implement separately)
+  |
+  +-- 7.  Run tests (auto-detected or configured)
+  +-- 8.  Commit all changes
+  +-- 9.  Push branch
+  +-- 10. Create PR (regular or draft)
+  +-- 11. Label PR (ai-generated, ai-failed if errored)
+  |
+  +-- 12. AI: Review the PR diff, produce comments
+  +-- 13. Post review comments on the PR
+  +-- 14. AI: Address review comments
+  +-- 15. Commit and push follow-up fixes
+  |
+  +-- 16. Collect changed file list
+  +-- 17. Post summary comment on the issue
+  +-- 18. Mark issue as processed in state file
 ```
 
-After implementation:
-- Tests are detected and run automatically (see [Test Detection](#test-detection))
-- A **draft PR** is opened if tests fail or an AI call failed; a **regular PR** otherwise
-- The run stops before PR creation if the AI produced no commit or the branch could not be pushed
-- The PR is labelled `ai-generated` (and `ai-failed` on error)
-- A summary comment is posted on the original issue
+Steps 12-15 (self-review) are non-fatal -- if they fail, the PR is still created. The pipeline is idempotent: rerunning it skips already-processed issues.
 
-### Test Detection
+## Configuration
 
-If `testCommand` is not set in `repos.json`, the pipeline auto-detects based on lock files and build manifests:
+The pipeline reads `config.yaml` (preferred) or falls back to `repos.json` for backward compatibility.
 
-| Signal | Command |
+```yaml
+# Repositories to process
+repos:
+  - owner: my-org
+    name: my-repo
+    defaultBranch: main
+    testCommand: pnpm test     # optional -- auto-detected if omitted
+  - owner: my-org
+    name: another-repo
+    defaultBranch: develop
+
+# Maximum issues to process per run (default: 10)
+maxIssuesPerRun: 10
+
+# Provider chain -- ordered list of AI providers to try
+# First provider with remaining quota handles each call
+# Supported: map, claude, codex, ollama
+providerChain:
+  - map
+  - claude
+  - codex
+  - ollama
+
+# Monthly quota limits for hosted providers
+quotaLimits:
+  claude: 200
+  codex: 100
+
+# Default Ollama model (default: qwen2.5-coder:latest)
+ollamaModel: qwen2.5-coder:latest
+
+# Per-provider configuration
+providers:
+  map:
+    timeoutMs: 120000
+    model: claude-sonnet-4-5
+    quota: 50
+    agents:                    # Configure which adapter each MAP stage uses
+      spec:
+        adapter: claude
+      review:
+        adapter: claude
+      execute:
+        adapter: claude
+  claude:
+    timeoutMs: 90000
+    quota: 200
+  codex:
+    timeoutMs: 60000
+    quota: 100
+  ollama:
+    timeoutMs: 300000
+    model: qwen2.5-coder:latest
+```
+
+### Config reference
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `repos` | array | required | Repositories to process |
+| `repos[].owner` | string | required | GitHub org or user |
+| `repos[].name` | string | required | Repository name |
+| `repos[].defaultBranch` | string | `main` | Base branch for PRs |
+| `repos[].testCommand` | string | auto-detect | Override the test command |
+| `repos[].cloneUrl` | string | GitHub HTTPS | Custom clone URL (useful for local testing) |
+| `maxIssuesPerRun` | number | `10` | Cap on issues processed per invocation |
+| `providerChain` | string[] | `[claude, codex, ollama]` | Ordered AI fallback chain |
+| `quotaLimits.claude` | number | `100` | Monthly call limit for Claude |
+| `quotaLimits.codex` | number | `50` | Monthly call limit for Codex |
+| `ollamaModel` | string | `qwen2.5-coder:latest` | Ollama model name |
+| `providers.<name>.timeoutMs` | number | varies | Timeout per AI invocation (ms) |
+| `providers.<name>.quota` | number | see quotaLimits | Per-provider quota override |
+| `providers.map.agents` | object | -- | Configure adapters for each MAP pipeline stage |
+
+### Environment variables
+
+| Variable | Required | Description |
+|---|---|---|
+| `GITHUB_TOKEN` | yes | Personal access token with `repo` scope |
+
+## AI providers
+
+The pipeline supports four AI providers. The `providerChain` controls the fallback order -- the first provider with remaining quota handles each call.
+
+| Provider | CLI binary | Quota | Agent mode | Notes |
+|---|---|---|---|---|
+| **MAP** | `map` | configurable | Full pipeline | Runs [multi-agent-pipeline](https://github.com/berlinguyinca/multi-agent-pipeline) in `--headless` mode. Handles spec, review, and implementation with TDD in a single call. |
+| **Claude** | `claude` | monthly limit (default 100) | Structured + agent | [Claude Code CLI](https://docs.anthropic.com/en/docs/claude-code). Uses `--print` for structured output, `--dangerously-skip-permissions` for agent mode. |
+| **Codex** | `codex` | monthly limit (default 50) | Structured + agent | [OpenAI Codex CLI](https://github.com/openai/codex). Uses `exec --json` for structured output, `exec --full-auto` for agent mode. |
+| **Ollama** | `ollama` | unlimited | Structured only | Local models via [Ollama](https://ollama.com/). Uses `run --format json`. No agent mode -- cannot write code autonomously. |
+
+### How the provider chain works
+
+1. The router iterates through `providerChain` in order
+2. For each provider, it checks `StateManager.hasQuota()` -- providers without a quota entry (e.g., Ollama) are always available
+3. If the provider's binary is not found (`ENOENT`), it silently falls through to the next
+4. If a provider errors (non-zero exit, timeout), the error propagates immediately -- no fallback
+5. Ollama's agent mode throws "does not support", which the router treats as a fallthrough
+
+### MAP vs. standard providers
+
+Standard providers (Claude, Codex, Ollama) handle spec generation and implementation as separate steps:
+- `invokeStructured` generates a spec from the issue
+- `invokeAgent` implements the spec in the working directory
+
+MAP (`handlesFullPipeline: true`) handles both atomically -- it receives the raw issue prompt and runs its own spec-review-execute cycle internally. The router detects this via the `handlesFullPipeline` flag and skips the separate `invokeStructured` call.
+
+## Test auto-detection
+
+When no `testCommand` is configured for a repo, the pipeline detects the test runner from the cloned project:
+
+| Detected file | Command |
 |---|---|
 | `pnpm-lock.yaml` | `pnpm test` |
 | `package-lock.json` | `npm test` |
@@ -119,54 +196,124 @@ If `testCommand` is not set in `repos.json`, the pipeline auto-detects based on 
 | `Cargo.toml` | `cargo test` |
 | `pom.xml` | `mvn test` |
 
-### AI Model Selection
+## State management
 
-Models are tried in order based on remaining monthly quota:
-
-1. **claude** — used first, up to `quotaLimits.claude` calls/month
-2. **codex** — fallback when claude quota is exhausted, up to `quotaLimits.codex` calls/month
-3. **ollama** — final fallback, unlimited
-
-If a CLI binary is missing (`ENOENT`), the pipeline falls through to the next provider automatically. Timeout or invocation errors propagate immediately.
-
-### Branch Naming
-
-Branches are created as `ai/<issue-number>-<slugified-title>` (max 50 chars for the slug). If a branch already exists without an open PR, it is deleted and recreated.
-
-## State File
-
-`.pipeline-state.json` is written automatically in the working directory. Writes are atomic (write to `.tmp`, then rename) to prevent corruption.
+`.pipeline-state.json` is written automatically in the working directory. Writes are atomic (write to `.tmp`, then rename) to prevent corruption on crash.
 
 ```json
 {
   "processedIssues": {
-    "owner/repo": [12, 34, 56]
+    "my-org/my-repo": [1, 5, 12]
   },
   "quota": {
-    "claude": { "used": 3, "limit": 100, "resetMonth": "2026-04" },
-    "codex":  { "used": 0, "limit": 50,  "resetMonth": "2026-04" }
+    "claude": { "used": 42, "limit": 100, "resetMonth": "2026-04" },
+    "codex":  { "used": 8,  "limit": 50,  "resetMonth": "2026-04" }
   }
 }
 ```
 
-- **`processedIssues`** — prevents the pipeline from creating duplicate PRs for already-handled issues across runs
-- **`quota`** — monthly call counts for `claude` and `codex`; counters reset automatically at the first invocation of a new UTC month
+- **Processed issues** -- keyed by `owner/name`, stores issue numbers to prevent duplicate processing
+- **Quota tracking** -- per-provider monthly call counts; counters reset automatically at the first run of a new UTC month
+- **Atomic writes** -- writes to `.tmp` then renames, preventing partial-write corruption
 
-Do not delete this file between runs unless you want the pipeline to re-process already-handled issues.
+To reprocess an issue, remove its number from the `processedIssues` array. To reset quotas, delete the file or wait for the next calendar month (UTC).
+
+## Branch naming and PR behavior
+
+Branches are created as `ai/{issue-number}-{slugified-title}` (slug capped at 50 characters):
+
+```
+ai/42-add-user-authentication
+```
+
+If a branch already exists with an open PR, the issue is skipped. If the branch exists without a PR (orphan), it is deleted and the issue is re-processed.
+
+| Condition | PR type | Labels |
+|---|---|---|
+| Tests pass, AI succeeded | Regular PR | `ai-generated` |
+| Tests fail | Draft PR | `ai-generated` |
+| AI invocation failed | Draft PR | `ai-generated`, `ai-failed` |
+
+A summary comment is posted on the original issue with the PR link, model used, test results, and changed files.
+
+## Development
+
+```bash
+pnpm install          # Install dependencies
+pnpm build            # Type-check (tsc --noEmit)
+pnpm lint             # ESLint over src/ and test/
+pnpm test             # All tests (unit + integration)
+pnpm test:unit        # Unit tests only
+pnpm test:integration # Integration tests only
+pnpm test:coverage    # Tests with V8 coverage (80% threshold)
+```
+
+Run a single test file:
+
+```bash
+pnpm vitest run test/unit/pipeline/runner.test.ts
+```
+
+### Project structure
+
+```
+src/
+  index.ts                    CLI entry point, wires dependencies
+  types/index.ts              All domain types and interfaces
+  config/
+    config.ts                 YAML/JSON config loader
+    state.ts                  State persistence and quota tracking
+  github/
+    client.ts                 Octokit wrapper (issues, PRs, branches, labels, diffs)
+  git/
+    operations.ts             Clone, branch, commit, push via child_process
+  ai/
+    router.ts                 Provider chain with quota-aware fallback
+    base-wrapper.ts           Shared spawn wrapper (timeout, error handling)
+    claude-wrapper.ts         Claude Code CLI integration
+    codex-wrapper.ts          OpenAI Codex CLI integration
+    ollama-wrapper.ts         Ollama CLI integration (structured only)
+    map-wrapper.ts            multi-agent-pipeline headless integration
+    errors.ts                 AIBinaryNotFoundError, AITimeoutError, AIInvocationError
+    file-scanner.ts           Detect files modified after a timestamp
+  pipeline/
+    runner.ts                 Top-level loop: repos -> issues -> process
+    issue-processor.ts        Per-issue orchestration (18-step pipeline)
+    prompts.ts                Prompt builders for spec, implementation, review
+    test-runner.ts            Test command detection and execution
+    spec-cache.ts             In-memory spec result cache
+test/
+  unit/                       Unit tests (mocks allowed)
+  integration/                Integration tests (real dependencies)
+```
+
+### Technical notes
+
+- ESM-only (`"type": "module"`) -- all imports must include `.js` extensions
+- TypeScript strict mode with `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`, `noPropertyAccessFromIndexSignature`
+- Coverage thresholds: 80% statements, branches, functions, and lines
+- Git identity is auto-configured in cloned repos (`pipeline@gh-issue-pipeline`) for CI environments where git config is unset
 
 ## Troubleshooting
 
-**Binary not found (`claude` / `codex` / `ollama`)**
-Install the missing CLI. The pipeline falls through to the next available provider. If none are reachable, the run fails with `AIBinaryNotFoundError`.
+**Binary not found (`claude` / `codex` / `ollama` / `map`)**
+Install the missing CLI. The pipeline falls through to the next provider in the chain. If no providers are reachable, the run fails with `AIBinaryNotFoundError`.
 
 **Quota exhausted**
-All three providers are at their monthly limit. Wait for the UTC month boundary (counts reset on the first run of the new month) or increase `quotaLimits` in `repos.json`.
+All providers are at their monthly limit. Wait for the UTC month boundary (counts reset on first run of the new month) or increase `quotaLimits` in your config.
 
 **`GITHUB_TOKEN` missing or invalid**
-Set `GITHUB_TOKEN` to a token with `repo` scope. Tokens with only `public_repo` scope cannot push branches to private repositories. The pipeline surfaces HTTP 401/403 with a clear error message.
+Set `GITHUB_TOKEN` to a token with `repo` scope. Tokens with only `public_repo` scope cannot push branches to private repositories. The pipeline surfaces HTTP 401/403 with a clear message.
 
 **Config file not found**
-The pipeline looks for `./repos.json` in the working directory by default. Pass `--config <path>` to specify a different location.
+The pipeline looks for `./repos.json` by default. Pass `--config config.yaml` to use YAML configuration.
 
 **Tests always fail**
-Set `testCommand` explicitly in `repos.json` if the auto-detection does not pick the right command, or if the test suite requires environment setup that the pipeline cannot provide.
+Set `testCommand` explicitly in your config if auto-detection picks the wrong command, or if the test suite requires environment setup the pipeline cannot provide.
+
+**MAP binary not found**
+Install [multi-agent-pipeline](https://github.com/berlinguyinca/multi-agent-pipeline): `cd /path/to/multi-agent-pipeline && pnpm build && npm link`. The pipeline logs a warning at startup if `map` is in the provider chain but the binary is missing.
+
+## License
+
+MIT

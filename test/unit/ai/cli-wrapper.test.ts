@@ -166,6 +166,14 @@ describe('ClaudeWrapper', () => {
 
     await expect(claude.invokeStructured('prompt', {})).rejects.toThrow(AIInvocationError)
   })
+
+  it('skips blank lines in parseClaudeStructured output', async () => {
+    const output = '\n\n' + claudeStructuredFixture + '\n\n'
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: output }))
+    const result = await claude.invokeStructured<{ answer: number }>('p', {})
+    expect(result.success).toBe(true)
+    expect(result.data?.answer).toBe(42)
+  })
 })
 
 // ---------------------------------------------------------------------------
@@ -213,6 +221,31 @@ describe('CodexWrapper', () => {
     spawnMock.mockReturnValue(makeFakeProcess({ exitCode: 2, stderr: 'codex fail' }))
 
     await expect(codex.invokeAgent('prompt', '/tmp')).rejects.toThrow(AIInvocationError)
+  })
+
+  it('skips blank lines in parseCodexStructured output', async () => {
+    const output = '\n\n' + codexFixture + '\n'
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: output }))
+    const result = await codex.invokeStructured<string>('p', {})
+    expect(result.success).toBe(true)
+  })
+
+  it('uses text field when output field is missing', async () => {
+    const fixture = JSON.stringify({ type: 'turn.completed', text: 'from text field' })
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: fixture }))
+    const result = await codex.invokeStructured<string>('p', {})
+    expect(result.success).toBe(true)
+    expect(result.data).toBe('from text field')
+  })
+
+  it('skips turn.completed events with no output or text', async () => {
+    const emptyEvent = JSON.stringify({ type: 'turn.completed' })
+    const goodEvent = JSON.stringify({ type: 'turn.completed', output: 'real' })
+    const fixture = emptyEvent + '\n' + goodEvent
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: fixture }))
+    const result = await codex.invokeStructured<string>('p', {})
+    expect(result.success).toBe(true)
+    expect(result.data).toBe('real')
   })
 })
 
@@ -296,4 +329,295 @@ describe('timeout behavior', () => {
     const codex = new CodexWrapper(50, 50)
     await expect(codex.invokeAgent('prompt', '/tmp')).rejects.toThrow(AITimeoutError)
   }, 3000)
+
+  it('throws AITimeoutError even when proc.kill() throws (base-wrapper line 51)', async () => {
+    const proc = new EventEmitter() as ChildProcess & {
+      stdout: EventEmitter
+      stderr: EventEmitter
+      kill: () => boolean
+    }
+    proc.stdout = new EventEmitter()
+    proc.stderr = new EventEmitter()
+    proc.kill = (): boolean => {
+      throw new Error('kill failed')
+    }
+    spawnMock.mockReturnValue(proc)
+
+    const claude = new ClaudeWrapper(50)
+    await expect(claude.invokeStructured('prompt', {})).rejects.toThrow(AITimeoutError)
+  }, 3000)
+})
+
+// ---------------------------------------------------------------------------
+// base-wrapper synchronous spawn throw tests (lines 37-44)
+// ---------------------------------------------------------------------------
+
+describe('base-wrapper synchronous spawn throw', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('throws AIBinaryNotFoundError when spawn throws ENOENT synchronously (lines 37-44)', async () => {
+    spawnMock.mockImplementation(() => {
+      throw Object.assign(new Error('spawn ENOENT'), { code: 'ENOENT' })
+    })
+
+    const claude = new ClaudeWrapper()
+    await expect(claude.invokeStructured('prompt', {})).rejects.toThrow(AIBinaryNotFoundError)
+  })
+
+  it('re-throws non-ENOENT synchronous spawn error (lines 40-42)', async () => {
+    spawnMock.mockImplementation(() => {
+      throw Object.assign(new Error('EPERM: operation not permitted'), { code: 'EPERM' })
+    })
+
+    const claude = new ClaudeWrapper()
+    await expect(claude.invokeStructured('prompt', {})).rejects.toThrow('EPERM')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// base-wrapper non-ENOENT error event test (lines 66-67)
+// ---------------------------------------------------------------------------
+
+describe('base-wrapper non-ENOENT error event', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('rejects with original error for non-ENOENT error events (lines 66-67)', async () => {
+    spawnMock.mockReturnValue(makeFakeProcess({ abortError: true }))
+
+    const claude = new ClaudeWrapper()
+    await expect(claude.invokeStructured('prompt', {})).rejects.toThrow(/aborted/i)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Claude parse fallback tests (lines 20, 23-27)
+// ---------------------------------------------------------------------------
+
+describe('ClaudeWrapper parse fallback branches', () => {
+  let claude: ClaudeWrapper
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    claude = new ClaudeWrapper()
+  })
+
+  it('parses whole output as JSON when no type:result line exists (line 23)', async () => {
+    // Output is valid JSON but no line has type:'result'
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: '{"answer": 42}' }))
+
+    const result = await claude.invokeStructured<{ answer: number }>('prompt', {})
+    expect(result.success).toBe(true)
+    expect(result.data).toEqual({ answer: 42 })
+  })
+
+  it('skips non-JSON lines in output (line 20 catch branch)', async () => {
+    // Mix of non-JSON lines and one valid result line
+    const output = 'not json\n' + claudeStructuredFixture + '\nmore noise'
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: output }))
+
+    const result = await claude.invokeStructured<{ answer: number }>('prompt', {})
+    expect(result.success).toBe(true)
+    expect(result.data).toEqual({ answer: 42 })
+  })
+
+  it('throws AIInvocationError when whole output is not valid JSON (lines 25-27)', async () => {
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: 'not json at all' }))
+
+    await expect(claude.invokeStructured('prompt', {})).rejects.toThrow(AIInvocationError)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Claude invokeStructured non-Error catch (lines 56-57)
+// ---------------------------------------------------------------------------
+
+describe('ClaudeWrapper invokeStructured non-Error catch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('returns { success: false } for non-Error throws (lines 56-57)', async () => {
+    // Spawn a process whose stdout is valid JSON but not parseable as claude structured output,
+    // AND whose close code is 0. We need a way to trigger the non-Error path.
+    // Since spawn is mocked, make it throw a non-Error value synchronously.
+    // This gets caught by the try/catch in base-wrapper which rethrows it.
+    // Then the claude-wrapper catch checks err instanceof Error — a non-Error passes
+    // through to the return { success: false } branch.
+    spawnMock.mockImplementation(() => {
+        throw 'string-error-not-an-Error-object'
+    })
+
+    const claude = new ClaudeWrapper()
+    const result = await claude.invokeStructured('prompt', {})
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('string-error-not-an-Error-object')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Codex parse fallback tests (lines 22, 36-40)
+// ---------------------------------------------------------------------------
+
+describe('CodexWrapper parse fallback branches', () => {
+  let codex: CodexWrapper
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    codex = new CodexWrapper()
+  })
+
+  it('skips non-JSON lines in output (line 22 catch branch)', async () => {
+    // Mix of non-JSON lines and one valid event line
+    const output = 'noise\n' + codexFixture
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: output }))
+
+    const result = await codex.invokeStructured<string>('prompt', {})
+    expect(result.success).toBe(true)
+  })
+
+  it('returns combined text as raw string when it is not valid JSON (lines 36-40)', async () => {
+    // turn.completed with plain text output (not JSON-parseable)
+    const fixture = JSON.stringify({ type: 'turn.completed', output: 'plain text output' })
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: fixture }))
+
+    const result = await codex.invokeStructured<string>('prompt', {})
+    expect(result.success).toBe(true)
+    expect(result.data).toBe('plain text output')
+  })
+
+  it('parses whole output as JSON fallback when no event lines exist (lines 38-39)', async () => {
+    // Output is valid JSON but not event-based lines
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: '{"key": "value"}' }))
+
+    const result = await codex.invokeStructured<{ key: string }>('prompt', {})
+    expect(result.success).toBe(true)
+    expect(result.data).toEqual({ key: 'value' })
+  })
+
+  it('throws AIInvocationError when no events and not valid JSON (lines 40-42)', async () => {
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: 'garbage output' }))
+
+    await expect(codex.invokeStructured('prompt', {})).rejects.toThrow(AIInvocationError)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Codex invokeStructured non-Error catch (lines 69-70)
+// ---------------------------------------------------------------------------
+
+describe('CodexWrapper invokeStructured non-Error catch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('returns { success: false } for non-Error throws (lines 69-70)', async () => {
+    spawnMock.mockImplementation(() => {
+        throw 'codex-string-error'
+    })
+
+    const codex = new CodexWrapper()
+    const result = await codex.invokeStructured('prompt', {})
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('codex-string-error')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ollama parse fallback tests (lines 15-16, 18-21)
+// ---------------------------------------------------------------------------
+
+describe('OllamaWrapper parse fallback branches', () => {
+  let ollama: OllamaWrapper
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    ollama = new OllamaWrapper('qwen2.5-coder:latest')
+  })
+
+  it('returns response field as-is when it is a plain string not JSON (lines 15-16)', async () => {
+    const fixture = JSON.stringify({ response: 'just a plain string' })
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: fixture }))
+
+    const result = await ollama.invokeStructured<string>('prompt', {})
+    expect(result.success).toBe(true)
+    expect(result.data).toBe('just a plain string')
+  })
+
+  it('returns whole parsed object when response field is absent (lines 18-21)', async () => {
+    const fixture = JSON.stringify({ value: 'no-response-field' })
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: fixture }))
+
+    const result = await ollama.invokeStructured<{ value: string }>('prompt', {})
+    expect(result.success).toBe(true)
+    expect(result.data).toEqual({ value: 'no-response-field' })
+  })
+
+  it('throws AIInvocationError when stdout is not valid JSON (outer catch lines 20-21)', async () => {
+    spawnMock.mockReturnValue(makeFakeProcess({ stdout: 'this is not json' }))
+
+    await expect(ollama.invokeStructured('prompt', {})).rejects.toThrow(AIInvocationError)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Ollama invokeStructured non-Error catch (lines 51-52)
+// ---------------------------------------------------------------------------
+
+describe('OllamaWrapper invokeStructured non-Error catch', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('returns { success: false } for non-Error throws (lines 51-52)', async () => {
+    spawnMock.mockImplementation(() => {
+        throw 'ollama-string-error'
+    })
+
+    const ollama = new OllamaWrapper('qwen2.5-coder:latest')
+    const result = await ollama.invokeStructured('prompt', {})
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('ollama-string-error')
+  })
+})
+
+
+// ---------------------------------------------------------------------------
+// base-wrapper branch coverage — null close code and stderr||stdout fallback
+// ---------------------------------------------------------------------------
+
+describe('base-wrapper branch coverage', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('uses -1 when close code is null (code ?? -1 branch)', async () => {
+    const proc = new EventEmitter() as ChildProcess & {
+      stdout: EventEmitter
+      stderr: EventEmitter
+      kill: () => boolean
+    }
+    proc.stdout = new EventEmitter()
+    proc.stderr = new EventEmitter()
+    proc.kill = () => true
+    setImmediate(() => {
+      proc.stdout.emit('data', Buffer.from('some output'))
+      proc.stderr.emit('data', Buffer.from(''))
+      proc.emit('close', null)
+    })
+    spawnMock.mockReturnValue(proc)
+    const claude = new ClaudeWrapper()
+    const err = await claude.invokeStructured('p', {}).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(AIInvocationError)
+    expect(String(err)).toMatch(/-1/)
+  })
+
+  it('uses stdout when stderr is empty on non-zero exit (stderr || stdout branch)', async () => {
+    spawnMock.mockReturnValue(makeFakeProcess({ exitCode: 1, stdout: 'stdout error info', stderr: '' }))
+    const claude = new ClaudeWrapper()
+    await expect(claude.invokeStructured('p', {})).rejects.toThrow('stdout error info')
+  })
 })

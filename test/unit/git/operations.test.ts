@@ -125,6 +125,32 @@ describe('GitOperations', () => {
         expect.any(Object)
       )
     })
+
+    it('retries without --branch for local URLs when first clone fails with "Remote branch" error', async () => {
+      let callCount = 0
+      spawnMock.mockImplementation((_cmd: string, args: string[]) => {
+        callCount++
+        if (callCount === 1 && args.includes('--branch')) {
+          // First clone attempt (with --branch) fails with "Remote branch" error
+          return makeFakeChild({ exitCode: 128, stderr: 'fatal: Remote branch main not found' })
+        }
+        // All other calls succeed (retry clone without --branch + config calls)
+        return makeFakeChild({ exitCode: 0 })
+      })
+      await git.clone('file:///local/repo', '/tmp/dir', 'main')
+      // Should have been called: clone with branch (fail), clone without branch (success), 2x config
+      expect(spawnMock.mock.calls.length).toBeGreaterThanOrEqual(3)
+    })
+
+    it('re-throws for local URL when error does not contain "Remote branch"', async () => {
+      spawnMock.mockReturnValue(makeFakeChild({ exitCode: 128, stderr: 'fatal: repository not found' }))
+      await expect(git.clone('file:///local/repo', '/tmp/dir', 'main')).rejects.toThrow()
+    })
+
+    it('re-throws for remote URL regardless of error message', async () => {
+      spawnMock.mockReturnValue(makeFakeChild({ exitCode: 128, stderr: 'fatal: Remote branch main not found' }))
+      await expect(git.clone('https://github.com/acme/api.git', '/tmp/dir', 'main')).rejects.toThrow()
+    })
   })
 
   describe('createBranch', () => {
@@ -170,6 +196,13 @@ describe('GitOperations', () => {
         ) // git commit exits 1 with stdout message (real git behavior)
 
       await expect(git.commitAll('/tmp/repo', 'empty commit')).resolves.toBe(false)
+    })
+
+    it('re-throws when commit fails and output does not contain "nothing to commit"', async () => {
+      spawnMock
+        .mockReturnValueOnce(makeFakeChild({ exitCode: 0 })) // git add -A succeeds
+        .mockReturnValueOnce(makeFakeChild({ exitCode: 1, stderr: 'fatal: some other error' }))
+      await expect(git.commitAll('/tmp/repo', 'msg')).rejects.toThrow()
     })
   })
 

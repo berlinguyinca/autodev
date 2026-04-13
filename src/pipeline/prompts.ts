@@ -1,4 +1,4 @@
-import type { Issue, ReviewComment } from '../types/index.js'
+import type { Issue, ReviewComment, ConflictFile } from '../types/index.js'
 
 export function buildSpecPrompt(issue: Issue): string {
   return `You are a software architect. Analyze this GitHub issue and produce a clear implementation spec.
@@ -74,4 +74,26 @@ Instructions:
 - Address every comment by updating the relevant file(s).
 - Resolve each issue directly — do not add workaround comments.
 - After fixing, ensure the code still compiles and tests pass.`
+}
+
+export function buildConflictResolutionPrompt(conflict: ConflictFile): string {
+  return `You are resolving a git merge conflict in the file "${conflict.path}".
+
+The file has conflict markers from rebasing a feature branch onto the latest base branch.
+
+File content with conflict markers:
+\`\`\`
+${conflict.content}
+\`\`\`
+
+Base version (common ancestor):
+\`\`\`
+${conflict.baseContent}
+\`\`\`
+
+Resolve this conflict by producing the final merged file content.
+Keep both the feature branch changes and the upstream changes, resolving overlapping edits intelligently.
+Do NOT include conflict markers (<<<, ===, >>>) in the output.
+
+Return the resolved file content as JSON: { "resolvedContent": "<the full resolved file>" }`
 }

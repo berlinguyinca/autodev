@@ -17,6 +17,7 @@ vi.mock('../../src/ai/index.js', () => ({
   ClaudeWrapper: vi.fn(),
   CodexWrapper: vi.fn(),
   OllamaWrapper: vi.fn(),
+  MAPWrapper: vi.fn(),
 }))
 
 vi.mock('../../src/config/index.js', () => ({
@@ -39,7 +40,7 @@ vi.mock('node:fs', async (importOriginal) => {
 import { run } from '../../src/index.js'
 import { PipelineRunner } from '../../src/pipeline/index.js'
 import { GitHubClient } from '../../src/github/index.js'
-import { AIRouter, ClaudeWrapper, CodexWrapper, OllamaWrapper } from '../../src/ai/index.js'
+import { AIRouter, ClaudeWrapper, CodexWrapper, OllamaWrapper, MAPWrapper } from '../../src/ai/index.js'
 import { StateManager, loadConfig } from '../../src/config/index.js'
 import { existsSync } from 'node:fs'
 
@@ -66,10 +67,14 @@ describe('CLI run()', () => {
     const runnerInstance = { run: vi.fn().mockResolvedValue(0) }
     vi.mocked(PipelineRunner).mockImplementation(() => runnerInstance as unknown as PipelineRunner)
     vi.mocked(GitHubClient).mockImplementation(() => ({}) as unknown as GitHubClient)
-    vi.mocked(StateManager).mockImplementation(() => ({}) as unknown as StateManager)
+    vi.mocked(StateManager).mockImplementation(() => ({
+      hasSeenStarPrompt: vi.fn().mockReturnValue(true),
+      markStarPromptSeen: vi.fn(),
+    }) as unknown as StateManager)
     vi.mocked(ClaudeWrapper).mockImplementation(() => ({}) as unknown as ClaudeWrapper)
     vi.mocked(CodexWrapper).mockImplementation(() => ({}) as unknown as CodexWrapper)
     vi.mocked(OllamaWrapper).mockImplementation(() => ({}) as unknown as OllamaWrapper)
+    vi.mocked(MAPWrapper).mockImplementation(() => ({}) as unknown as MAPWrapper)
     vi.mocked(AIRouter).mockImplementation(() => ({}) as unknown as AIRouter)
   })
 
@@ -181,6 +186,39 @@ describe('CLI run()', () => {
 
     expect(code).toBe(0)
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('Usage'))
+    spy.mockRestore()
+  })
+
+  // -------------------------------------------------------------------------
+  // 7. --poll flag validation
+  // -------------------------------------------------------------------------
+
+  it('returns exit code 1 when --poll value is below minimum (30s)', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const code = await run(['--poll', '10'])
+
+    expect(code).toBe(1)
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('--poll'))
+    spy.mockRestore()
+  })
+
+  it('returns exit code 1 when --poll value is not a number', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const code = await run(['--poll', 'abc'])
+
+    expect(code).toBe(1)
+    spy.mockRestore()
+  })
+
+  it('prints --poll in help output', async () => {
+    const spy = vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await run(['--help'])
+
+    const allOutput = spy.mock.calls.map(c => c[0]).join('\n')
+    expect(allOutput).toContain('--poll')
     spy.mockRestore()
   })
 })

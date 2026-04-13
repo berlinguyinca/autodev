@@ -1,5 +1,5 @@
 import { Octokit } from '@octokit/rest'
-import type { Issue, ReviewComment } from '../types/index.js'
+import type { Issue, ReviewComment, PRComment, PRInfo } from '../types/index.js'
 
 export interface CreatePRParams {
   owner: string
@@ -229,6 +229,63 @@ export class GitHubClient {
         url: pr.html_url,
         isDraft: pr.draft ?? false,
       }
+    } catch (err) {
+      wrapError(err, owner, name)
+    }
+  }
+
+  async listPRComments(owner: string, name: string, prNumber: number): Promise<PRComment[]> {
+    try {
+      const response = await this.octokit.issues.listComments({
+        owner,
+        repo: name,
+        issue_number: prNumber,
+      })
+      return response.data.map((c) => ({
+        id: c.id,
+        body: c.body ?? '',
+        user: c.user?.login ?? '',
+        createdAt: c.created_at,
+      }))
+    } catch (err) {
+      wrapError(err, owner, name)
+    }
+  }
+
+  async listOpenPRsWithLabel(owner: string, name: string, label: string): Promise<PRInfo[]> {
+    try {
+      const response = await this.octokit.pulls.list({
+        owner,
+        repo: name,
+        state: 'open',
+      })
+      return response.data
+        .filter((pr) => pr.labels.some((l) => l.name === label))
+        .map((pr) => ({
+          number: pr.number,
+          url: pr.html_url,
+          isDraft: pr.draft ?? false,
+          head: pr.head.ref,
+          base: pr.base.ref,
+        }))
+    } catch (err) {
+      wrapError(err, owner, name)
+    }
+  }
+
+  async mergePullRequest(
+    owner: string,
+    name: string,
+    prNumber: number,
+    method: 'merge' | 'squash' | 'rebase' = 'merge',
+  ): Promise<void> {
+    try {
+      await this.octokit.pulls.merge({
+        owner,
+        repo: name,
+        pull_number: prNumber,
+        merge_method: method,
+      })
     } catch (err) {
       wrapError(err, owner, name)
     }

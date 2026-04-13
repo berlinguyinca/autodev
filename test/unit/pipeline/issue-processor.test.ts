@@ -86,6 +86,20 @@ function makeAIMock(model: AIModel = 'claude') {
       stderr: '',
       model,
     }),
+    invokeStructuredThenAgent: vi.fn().mockResolvedValue({
+      structured: {
+        success: true,
+        data: { spec: 'Generated spec text' },
+        rawOutput: 'raw',
+      },
+      agent: {
+        success: true,
+        filesWritten: ['src/index.ts'],
+        stdout: '',
+        stderr: '',
+      },
+      model,
+    }),
   }
 }
 
@@ -101,8 +115,8 @@ function makeGitMock() {
 
 function makeStateMock() {
   return {
-    isIssueProcessed: vi.fn().mockReturnValue(false),
-    markIssueProcessed: vi.fn(),
+    shouldProcessIssue: vi.fn().mockReturnValue(true),
+    markIssueOutcome: vi.fn(),
     getAvailableModel: vi.fn().mockReturnValue('claude' as AIModel),
     incrementUsage: vi.fn(),
   }
@@ -172,7 +186,7 @@ describe('IssueProcessor', () => {
   })
 
   it('skips already-processed issues without cloning', async () => {
-    state.isIssueProcessed.mockReturnValue(true)
+    state.shouldProcessIssue.mockReturnValue(false)
 
     const result = await processor.processIssue(repo, issue)
 
@@ -242,7 +256,7 @@ describe('IssueProcessor', () => {
   it('marks issue as processed in state after successful run', async () => {
     await processor.processIssue(repo, issue)
 
-    expect(state.markIssueProcessed).toHaveBeenCalledWith('acme/api', 42)
+    expect(state.markIssueOutcome).toHaveBeenCalledWith('acme/api', 42, expect.objectContaining({ status: 'success' }))
   })
 
   it('stops before PR creation when there is nothing to commit', async () => {
@@ -259,7 +273,7 @@ describe('IssueProcessor', () => {
       42,
       expect.stringMatching(/no commit|no PR/i),
     )
-    expect(state.markIssueProcessed).not.toHaveBeenCalled()
+    expect(state.markIssueOutcome).toHaveBeenCalledWith('acme/api', 42, expect.objectContaining({ status: 'failure' }))
   })
 
   it('fails before PR creation when push fails', async () => {
@@ -276,12 +290,11 @@ describe('IssueProcessor', () => {
       42,
       expect.stringMatching(/failed before opening a PR|push failed/i),
     )
-    expect(state.markIssueProcessed).not.toHaveBeenCalled()
+    expect(state.markIssueOutcome).toHaveBeenCalledWith('acme/api', 42, expect.objectContaining({ status: 'failure' }))
   })
 
   it('AI total failure: creates draft PR with ai-failed label and posts error comment, still cleans up', async () => {
-    ai.invokeStructured.mockRejectedValue(new Error('AI completely unavailable'))
-    ai.invokeAgent.mockRejectedValue(new Error('AI completely unavailable'))
+    ai.invokeStructuredThenAgent.mockRejectedValue(new Error('AI completely unavailable'))
 
     await processor.processIssue(repo, issue)
 
@@ -327,5 +340,267 @@ describe('IssueProcessor', () => {
     const result = await processorWithCodex.processIssue(repo, issue)
 
     expect(result.modelUsed).toBe('codex')
+  })
+
+  // -------------------------------------------------------------------------
+  // Review/follow-up catch blocks (lines 194-214, 221-223)
+  // -------------------------------------------------------------------------
+
+  it('warns and continues when postReviewComments throws after review returns comments', async () => {
+    // Set up review to return comments
+    ai.invokeStructured.mockResolvedValue({
+      success: true,
+      data: { comments: [{ path: 'a.ts', line: 1, body: 'fix this' }] },
+      rawOutput: '',
+      model: 'claude' as const,
+    })
+    github.postReviewComments.mockRejectedValue(new Error('GitHub API error'))
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to post review comments'),
+      expect.any(String),
+    )
+    // Processing should still complete successfully
+    expect(result.success).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
+  it('warns and continues when review AI invokeStructured throws', async () => {
+    ai.invokeStructured.mockRejectedValue(new Error('review AI unavailable'))
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Review AI call failed'),
+      expect.any(String),
+    )
+    expect(result.success).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
+  it('warns and continues when follow-up invokeAgent throws after review comments', async () => {
+    // Review returns comments so we enter the follow-up block
+    ai.invokeStructured.mockResolvedValue({
+      success: true,
+      data: { comments: [{ path: 'b.ts', line: 5, body: 'needs work' }] },
+      rawOutput: '',
+      model: 'claude' as const,
+    })
+    ai.invokeAgent.mockRejectedValue(new Error('follow-up agent failed'))
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Review follow-up failed'),
+      expect.any(String),
+    )
+    expect(result.success).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
+  it('warns and returns filesChanged as [] when getChangedFiles throws', async () => {
+    git.getChangedFiles.mockRejectedValue(new Error('git diff failed'))
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to get changed files'),
+      expect.any(String),
+    )
+    expect(result.filesChanged).toEqual([])
+    expect(result.success).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
+  // -------------------------------------------------------------------------
+  // Branch coverage for defensive code paths
+  // -------------------------------------------------------------------------
+
+  it('uses "main" as base branch when repo.defaultBranch is undefined', async () => {
+    const repoNoDefault: RepoConfig = { owner: 'acme', name: 'api' } // no defaultBranch
+
+    const result = await processor.processIssue(repoNoDefault, issue)
+
+    // git.clone should be called with 'main' as the base branch
+    expect(git.clone).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      'main',
+    )
+    expect(result.success).toBe(true)
+  })
+
+  it('wraps non-Error throws from AI into an Error (aiFailure branch)', async () => {
+    // invokeStructuredThenAgent throws a non-Error value (e.g. a string)
+    ai.invokeStructuredThenAgent.mockRejectedValue('string error value')
+
+    const result = await processor.processIssue(repo, issue)
+
+    // Should still create draft PR with ai-failed label
+    expect(github.createDraftPullRequest).toHaveBeenCalled()
+    expect(result.success).toBe(true) // PR was created, result is "success" from pipeline perspective
+  })
+
+  it('shows failing tests in status comment when no commit and tests fail', async () => {
+    vi.mocked(runTests).mockReturnValue({ passed: false, output: 'FAIL: tests failed' })
+    git.commitAll.mockResolvedValue(false)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(result.success).toBe(false)
+    // The comment should show ❌ Failing
+    const commentBody = vi.mocked(github.postIssueComment).mock.calls[0]?.[3] as string
+    expect(commentBody).toContain('❌')
+  })
+
+  it('postStatusComment silently swallows errors when postIssueComment throws', async () => {
+    // Force an error that triggers the outer catch AND postStatusComment
+    git.push.mockRejectedValueOnce(new Error('push failed'))
+    // Make postIssueComment throw too — should be silently swallowed
+    github.postIssueComment.mockRejectedValue(new Error('comment API down'))
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    // Should not throw — the catch block in postStatusComment handles it
+    const result = await processor.processIssue(repo, issue)
+    expect(result.success).toBe(false)
+
+    warnSpy.mockRestore()
+  })
+
+  it('postStatusComment uses String(err) for non-Error thrown by postIssueComment', async () => {
+    // Force an error that triggers the outer catch AND postStatusComment
+    git.push.mockRejectedValueOnce(new Error('push failed'))
+    // Make postIssueComment throw a non-Error value
+    github.postIssueComment.mockRejectedValue('non-error-value')
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to post status comment'),
+      'non-error-value',
+    )
+    expect(result.success).toBe(false)
+
+    warnSpy.mockRestore()
+  })
+
+  it('warns with String(err) when review AI throws a non-Error value', async () => {
+    // invokeStructured (review step) throws a non-Error
+    ai.invokeStructured.mockRejectedValue('non-error string')
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Review AI call failed'),
+      'non-error string',
+    )
+    expect(result.success).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
+  it('warns with String(err) when postReviewComments throws a non-Error value', async () => {
+    ai.invokeStructured.mockResolvedValue({
+      success: true,
+      data: { comments: [{ path: 'a.ts', line: 1, body: 'fix' }] },
+      rawOutput: '',
+      model: 'claude' as const,
+    })
+    github.postReviewComments.mockRejectedValue('non-error string')
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to post review comments'),
+      'non-error string',
+    )
+    expect(result.success).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
+  it('warns with String(err) when follow-up invokeAgent throws a non-Error value', async () => {
+    ai.invokeStructured.mockResolvedValue({
+      success: true,
+      data: { comments: [{ path: 'b.ts', line: 5, body: 'work' }] },
+      rawOutput: '',
+      model: 'claude' as const,
+    })
+    ai.invokeAgent.mockRejectedValue('non-error agent failure')
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Review follow-up failed'),
+      'non-error agent failure',
+    )
+    expect(result.success).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
+  it('warns with String(err) when getChangedFiles throws a non-Error value', async () => {
+    git.getChangedFiles.mockRejectedValue('non-error string')
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Failed to get changed files'),
+      'non-error string',
+    )
+    expect(result.filesChanged).toEqual([])
+    expect(result.success).toBe(true)
+
+    warnSpy.mockRestore()
+  })
+
+  it('outer catch uses String(err) when a non-Error is thrown and prUrl is undefined', async () => {
+    // Make git.clone throw a non-Error to enter outer catch before PR creation
+    git.clone.mockRejectedValue('string clone error')
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(result.success).toBe(false)
+    expect(result.error).toBe('string clone error')
+  })
+
+  it('outer catch includes prUrl in result when PR was created before the error', async () => {
+    // PR is created but then a later step throws — outer catch should include prUrl
+    // Use the second push call (follow-up) to cause error AFTER PR exists
+    // Actually, we need an error after prNumber/prUrl are set but before the try block ends
+    // getChangedFiles can't be used since it's caught internally
+    // Let's use postIssueComment (final summary) to throw after PR is created
+    github.postIssueComment.mockRejectedValue(new Error('summary comment failed'))
+
+    const result = await processor.processIssue(repo, issue)
+
+    expect(result.success).toBe(false)
+    // prUrl should be set since PR was created before the error
+    expect(result.prUrl).toBe('https://github.com/acme/api/pull/101')
   })
 })

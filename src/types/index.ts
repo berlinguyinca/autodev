@@ -1,3 +1,4 @@
+/* v8 ignore file */
 // Core domain types
 
 export interface Issue {
@@ -19,6 +20,29 @@ export interface RepoConfig {
   cloneUrl?: string;
 }
 
+export interface ProviderConfig {
+  timeoutMs?: number;
+  quota?: number;
+  model?: string;
+  agents?: {
+    spec?: { adapter: 'claude' | 'codex' | 'ollama' };
+    review?: { adapter: 'claude' | 'codex' | 'ollama' };
+    execute?: { adapter: 'claude' | 'codex' | 'ollama' };
+  };
+}
+
+export type PipelineTask = 'specGeneration' | 'implementation' | 'codeReview' | 'conflictResolution'
+
+export interface TaskModelConfig {
+  provider: AIModel
+  model?: string        // e.g., 'gemma3:latest' for Ollama
+}
+
+export interface RetryConfig {
+  maxAttempts: number
+  backoffMinutes: number
+}
+
 export interface PipelineConfig {
   repos: RepoConfig[];
   ollamaModel?: string;
@@ -27,6 +51,13 @@ export interface PipelineConfig {
     claude?: number;
     codex?: number;
   };
+  providerChain?: AIModel[];
+  providers?: Partial<Record<string, ProviderConfig>>;
+  taskModels?: Partial<Record<PipelineTask, TaskModelConfig>>;
+  retry?: RetryConfig;
+  mergeCommentTrigger?: string;
+  mergeMethod?: 'merge' | 'squash' | 'rebase';
+  mergeDraftPRs?: boolean;
 }
 
 export interface QuotaState {
@@ -35,15 +66,21 @@ export interface QuotaState {
   resetMonth: string; // "YYYY-MM" format, UTC
 }
 
-export interface PipelineState {
-  processedIssues: Record<string, number[]>; // "owner/name" -> issue numbers[]
-  quota: {
-    claude: QuotaState;
-    codex: QuotaState;
-  };
+export interface IssueOutcome {
+  status: 'success' | 'failure'
+  lastAttempt: string        // ISO 8601
+  attemptCount: number
+  error?: string             // truncated failure reason
+  prUrl?: string
 }
 
-export type AIModel = "claude" | "codex" | "ollama";
+export interface PipelineState {
+  processedIssues: Record<string, Record<number, IssueOutcome>>; // "owner/name" -> { issueNumber: outcome }
+  quota: Record<string, QuotaState>; // keyed by AIModel values (extensible)
+  starPromptSeen?: boolean;
+}
+
+export type AIModel = "claude" | "codex" | "ollama" | "map";
 
 export interface AgentResult {
   success: boolean;
@@ -83,9 +120,44 @@ export interface ProcessingResult {
   error?: string;
 }
 
+export interface PRComment {
+  id: number
+  body: string
+  user: string
+  createdAt: string
+}
+
+export interface PRInfo {
+  number: number
+  url: string
+  isDraft: boolean
+  head: string      // branch name
+  base: string      // target branch
+}
+
+export interface MergeResult {
+  prNumber: number
+  repoFullName: string
+  merged: boolean
+  conflictsResolved: number
+  error?: string
+}
+
+export interface ConflictFile {
+  path: string
+  content: string     // full file content with conflict markers
+  baseContent: string // from git show :1:<path>
+}
+
+export interface RebaseResult {
+  success: boolean
+  conflicts: ConflictFile[]
+}
+
 // Provider interfaces
 export interface AIProvider {
   model: AIModel;
-  invokeStructured<T>(prompt: string, schema: object): Promise<StructuredResult<T>>;
+  readonly handlesFullPipeline: boolean;
+  invokeStructured<T>(prompt: string, schema: object, modelOverride?: string): Promise<StructuredResult<T>>;
   invokeAgent(prompt: string, workingDir: string): Promise<AgentResult>;
 }

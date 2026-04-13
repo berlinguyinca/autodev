@@ -2,6 +2,7 @@ node_modules/
 dist/
 coverage/
 .pipeline-state.json
+.pipeline-cache/
 *.log
 .DS_Store
 .omx/

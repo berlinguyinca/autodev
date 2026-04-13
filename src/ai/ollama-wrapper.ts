@@ -23,15 +23,16 @@ function parseOllamaStructured<T>(stdout: string): T {
 
 export class OllamaWrapper implements AIProvider {
   readonly model: AIModel = 'ollama'
+  readonly handlesFullPipeline = false
 
   constructor(
     private readonly ollamaModel: string = 'qwen2.5-coder:latest',
     private readonly structuredTimeoutMs = DEFAULT_STRUCTURED_TIMEOUT_MS
   ) {}
 
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  async invokeStructured<T>(prompt: string, _schema: object): Promise<StructuredResult<T>> {
-    const args = ['run', this.ollamaModel, '--format', 'json', prompt]
+  async invokeStructured<T>(prompt: string, _schema: object, modelOverride?: string): Promise<StructuredResult<T>> {
+    const model = modelOverride ?? this.ollamaModel
+    const args = ['run', model, '--format', 'json', prompt]
 
     try {
       const { stdout } = await invokeProcess({

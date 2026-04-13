@@ -155,4 +155,5 @@ describe('loadConfig', () => {
     expect(config.quotaLimits?.claude).toBeUndefined()
     expect(config.quotaLimits?.codex).toBe(30)
   })
+
 })

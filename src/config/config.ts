@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { readFileSync } from 'node:fs'
+import { readFileSync, writeFileSync, renameSync } from 'node:fs'
 import type { PipelineConfig, RepoConfig } from '../types/index.js'
 
 const RepoConfigSchema = z.object({
@@ -73,4 +73,11 @@ export function loadConfig(configPath: string): PipelineConfig {
   }
 
   return toTyped(result.data)
+}
+
+/** Serialize config to JSON and write atomically (tmp + rename). */
+export function saveConfig(filePath: string, config: PipelineConfig): void {
+  const tmp = `${filePath}.tmp`
+  writeFileSync(tmp, JSON.stringify(config, null, 2), 'utf-8')
+  renameSync(tmp, filePath)
 }

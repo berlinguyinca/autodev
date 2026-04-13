@@ -3,6 +3,7 @@ import type { GitHubClient } from '../github/client.js'
 import type { AIRouter } from '../ai/router.js'
 import type { GitOperations } from '../git/operations.js'
 import type { StateManager } from '../config/state.js'
+import type { StatsDatabase } from '../stats/database.js'
 import { createTempDir, cleanupTempDir, buildBranchName } from '../git/index.js'
 import { buildSpecPrompt, buildImplementationPrompt, buildReviewPrompt, buildFollowUpPrompt } from './prompts.js'
 import { detectTestCommand, runTests } from './test-runner.js'
@@ -13,7 +14,16 @@ export class IssueProcessor {
     private readonly ai: AIRouter,
     private readonly git: GitOperations,
     private readonly state: StateManager,
+    private readonly statsDb?: StatsDatabase | undefined,
   ) {}
+
+  private recordStats(result: ProcessingResult): void {
+    try {
+      this.statsDb?.recordResult(result)
+    } catch {
+      // Stats recording failure must never crash the pipeline.
+    }
+  }
 
   private async postStatusComment(
     repo: RepoConfig,
@@ -243,7 +253,7 @@ export class IssueProcessor {
       // 18. Mark issue as processed in state
       this.state.markIssueProcessed(repoFullName, issue.number)
 
-      return {
+      const successResult: ProcessingResult = {
         issueNumber: issue.number,
         repoFullName,
         success: true,
@@ -253,6 +263,8 @@ export class IssueProcessor {
         modelUsed,
         filesChanged,
       }
+      this.recordStats(successResult)
+      return successResult
     } catch (err) {
       const error = err instanceof Error ? err.message : String(err)
       if (prUrl === undefined) {
@@ -276,6 +288,7 @@ export class IssueProcessor {
         error,
       }
       if (prUrl !== undefined) failResult.prUrl = prUrl
+      this.recordStats(failResult)
       return failResult
     } finally {
       cleanupTempDir(tempDir)

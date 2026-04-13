@@ -24,6 +24,17 @@ vi.mock('../../src/config/index.js', () => ({
   loadConfig: vi.fn(),
 }))
 
+vi.mock('../../src/stats/index.js', () => ({
+  StatsDatabase: vi.fn().mockImplementation(() => ({
+    close: vi.fn(),
+    recordResult: vi.fn(),
+  })),
+}))
+
+vi.mock('../../src/tui/index.js', () => ({
+  start: vi.fn(),
+}))
+
 vi.mock('node:fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs')>()
   return {
@@ -42,6 +53,7 @@ import { GitHubClient } from '../../src/github/index.js'
 import { AIRouter, ClaudeWrapper, CodexWrapper, OllamaWrapper } from '../../src/ai/index.js'
 import { StateManager, loadConfig } from '../../src/config/index.js'
 import { existsSync } from 'node:fs'
+import { start } from '../../src/tui/index.js'
 
 // ---------------------------------------------------------------------------
 // Tests
@@ -182,5 +194,40 @@ describe('CLI run()', () => {
     expect(code).toBe(0)
     expect(spy).toHaveBeenCalledWith(expect.stringContaining('Usage'))
     spy.mockRestore()
+  })
+
+  // -------------------------------------------------------------------------
+  // 7. --tui flag
+  // -------------------------------------------------------------------------
+
+  it('launches TUI and returns 0 when --tui is passed with valid config', async () => {
+    vi.mocked(existsSync).mockReturnValue(true)
+
+    const code = await run(['--tui'])
+
+    expect(code).toBe(0)
+    expect(start).toHaveBeenCalledOnce()
+    expect(PipelineRunner).not.toHaveBeenCalled()
+  })
+
+  it('returns 1 when --tui is passed but config file not found', async () => {
+    vi.mocked(existsSync).mockReturnValue(false)
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    const code = await run(['--tui'])
+
+    expect(code).toBe(1)
+    expect(spy).toHaveBeenCalledWith(expect.stringContaining('config file not found'))
+    spy.mockRestore()
+  })
+
+  it('--tui does not require GITHUB_TOKEN', async () => {
+    delete process.env['GITHUB_TOKEN']
+    vi.mocked(existsSync).mockReturnValue(true)
+
+    const code = await run(['--tui'])
+
+    expect(code).toBe(0)
+    expect(start).toHaveBeenCalledOnce()
   })
 })

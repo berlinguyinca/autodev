@@ -12,7 +12,7 @@
   - class AIInvocationError
 - `src/ai/ollama-wrapper.ts` — class OllamaWrapper
 - `src/ai/router.ts` — class AIRouter
-- `src/config/config.ts` — function loadConfig: (configPath) => PipelineConfig
+- `src/config/config.ts` — function loadConfig: (configPath) => PipelineConfig, function saveConfig: (filePath, config) => void
 - `src/config/state.ts` — class StateManager
 - `src/git/operations.ts`
   - function buildBranchName: (issueNumber, title) => string
@@ -35,3 +35,27 @@
   - function detectTestCommand: (dir, repoConfig) => string | null
   - function runTests: (dir, command) => TestResult
   - interface TestResult
+- `src/stats/database.ts` — class StatsDatabase
+- `src/tui/app.ts`
+  - function createInitialState: () => TuiState
+  - function switchTab: (state) => TuiState
+  - function buildTabHeader: (state) => string
+  - function renderStatisticsContent: (db) => string
+  - function renderRepositoriesContent: (config) => string
+  - function start: (deps) => void
+  - _...3 more_
+- `src/tui/repositories-tab.ts`
+  - function formatRepoList: (config) => RepoListItem[]
+  - function addRepo: (config, repo) => PipelineConfig
+  - function editRepo: (config, index, updated) => PipelineConfig
+  - function removeRepo: (config, index) => PipelineConfig
+  - function persistConfig: (filePath, config) => void
+  - interface RepoListItem
+- `src/tui/statistics-tab.ts`
+  - function formatSummaryRows: (summary) => SummaryRow[]
+  - function formatRepoRows: (summary) => RepoRow[]
+  - function formatModelRows: (models) => ModelRow[]
+  - function formatRecentRows: (records) => RecentRow[]
+  - function loadStatisticsData: (db) => void
+  - interface SummaryRow
+  - _...3 more_

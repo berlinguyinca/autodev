@@ -13,6 +13,8 @@
     "start": "pnpm build && node dist/index.js"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/blessed": "^0.1.27",
     "@types/node": "^25.6.0",
     "@typescript-eslint/eslint-plugin": "^8.0.0",
     "@typescript-eslint/parser": "^8.0.0",
@@ -23,6 +25,15 @@
   },
   "dependencies": {
     "@octokit/rest": "^21.0.0",
+    "better-sqlite3": "^12.9.0",
+    "blessed": "^0.1.81",
+    "blessed-contrib": "^4.11.0",
     "zod": "^3.23.0"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "better-sqlite3",
+      "esbuild"
+    ]
   }
 }

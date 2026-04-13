@@ -1,34 +1,40 @@
 import type { StateManager } from '../config/state.js'
-import type { AIProvider, AIModel, StructuredResult, AgentResult } from '../types/index.js'
-import { AIBinaryNotFoundError } from './errors.js'
+import type { AIProvider, AIModel, StructuredResult, AgentResult, PipelineTask, TaskModelConfig } from '../types/index.js'
+import { AIBinaryNotFoundError, AIInvocationError } from './errors.js'
 
-type ProvidersMap = Record<AIModel, AIProvider>
+type ProvidersMap = Partial<Record<AIModel, AIProvider>>
 
-// Ordered fallback chain for binary-not-found errors
-const FALLBACK_ORDER: AIModel[] = ['claude', 'codex', 'ollama']
+const DEFAULT_CHAIN: AIModel[] = ['claude', 'codex', 'ollama']
 
 export class AIRouter {
+  private readonly providerChain: AIModel[]
+
   constructor(
     private readonly state: StateManager,
-    private readonly providers: ProvidersMap
-  ) {}
+    private readonly providers: ProvidersMap,
+    providerChain?: AIModel[],
+    private readonly taskModels?: Partial<Record<PipelineTask, TaskModelConfig>>,
+  ) {
+    this.providerChain = providerChain ?? DEFAULT_CHAIN
+  }
 
   async invokeStructured<T>(
     prompt: string,
-    schema: object
+    schema: object,
   ): Promise<StructuredResult<T> & { model: AIModel }> {
-    const selected = this.state.getAvailableModel()
-    const candidates = this.buildCandidates(selected)
+    const candidates = this.getChainCandidates()
 
     for (const model of candidates) {
       const provider = this.providers[model]
+      if (provider === undefined) continue
+      // Skip full-pipeline providers — they don't support invokeStructured
+      if (provider.handlesFullPipeline) continue
       try {
         const result = await provider.invokeStructured<T>(prompt, schema)
         this.trackUsage(model)
         return { ...result, model }
       } catch (err) {
         if (err instanceof AIBinaryNotFoundError) {
-          // Try next in chain
           continue
         }
         // AITimeoutError, AIInvocationError, or unknown — re-throw immediately
@@ -42,19 +48,23 @@ export class AIRouter {
 
   async invokeAgent(
     prompt: string,
-    workingDir: string
+    workingDir: string,
   ): Promise<AgentResult & { model: AIModel }> {
-    const selected = this.state.getAvailableModel()
-    const candidates = this.buildCandidates(selected)
+    const candidates = this.getChainCandidates()
 
     for (const model of candidates) {
       const provider = this.providers[model]
+      if (provider === undefined) continue
       try {
         const result = await provider.invokeAgent(prompt, workingDir)
         this.trackUsage(model)
         return { ...result, model }
       } catch (err) {
         if (err instanceof AIBinaryNotFoundError) {
+          continue
+        }
+        // Fall through on "does not support" errors (e.g. OllamaWrapper agent mode)
+        if (err instanceof AIInvocationError && err.message.includes('does not support')) {
           continue
         }
         throw err
@@ -64,14 +74,79 @@ export class AIRouter {
     throw new AIBinaryNotFoundError('(all AI providers)')
   }
 
-  /** Build ordered list of candidates starting from selected model and falling through. */
-  private buildCandidates(selected: AIModel): AIModel[] {
-    const startIndex = FALLBACK_ORDER.indexOf(selected)
-    if (startIndex === -1) return FALLBACK_ORDER
-    return FALLBACK_ORDER.slice(startIndex)
+  async invokeStructuredThenAgent<T>(
+    structuredPrompt: string,
+    schema: object,
+    agentPrompt: string | ((spec: string) => string),
+    workingDir: string,
+  ): Promise<{ structured: StructuredResult<T> | null; agent: AgentResult; model: AIModel }> {
+    const candidates = this.getChainCandidates()
+
+    for (const model of candidates) {
+      const provider = this.providers[model]
+      if (provider === undefined) continue
+
+      try {
+        if (provider.handlesFullPipeline) {
+          // Full-pipeline provider: skip invokeStructured, pass raw prompt to invokeAgent
+          const agentResult = await provider.invokeAgent(structuredPrompt, workingDir)
+          this.trackUsage(model)
+          return { structured: null, agent: agentResult, model }
+        }
+
+        // Standard provider: invokeStructured first, then invokeAgent
+        const structuredResult = await provider.invokeStructured<T>(structuredPrompt, schema)
+        const specText = structuredResult.rawOutput
+        const resolvedAgentPrompt = typeof agentPrompt === 'function'
+          ? agentPrompt(specText)
+          : agentPrompt
+
+        const agentResult = await provider.invokeAgent(resolvedAgentPrompt, workingDir)
+        this.trackUsage(model)
+        return { structured: structuredResult, agent: agentResult, model }
+      } catch (err) {
+        if (err instanceof AIBinaryNotFoundError) {
+          continue
+        }
+        // Fall through on "does not support" errors
+        if (err instanceof AIInvocationError && err.message.includes('does not support')) {
+          continue
+        }
+        throw err
+      }
+    }
+
+    throw new AIBinaryNotFoundError('(all AI providers)')
   }
 
-  /** Increment quota only for models that have quota (not ollama). */
+  /**
+   * Invoke structured with a task-specific provider if configured,
+   * otherwise fall back to the normal chain.
+   */
+  async invokeStructuredForTask<T>(
+    task: PipelineTask,
+    prompt: string,
+    schema: object,
+  ): Promise<StructuredResult<T> & { model: AIModel }> {
+    const taskConfig = this.taskModels?.[task]
+    if (taskConfig !== undefined) {
+      const provider = this.providers[taskConfig.provider]
+      if (provider !== undefined) {
+        const result = await provider.invokeStructured<T>(prompt, schema, taskConfig.model)
+        this.trackUsage(taskConfig.provider)
+        return { ...result, model: taskConfig.provider }
+      }
+    }
+    // Fall back to normal chain
+    return this.invokeStructured<T>(prompt, schema)
+  }
+
+  /** Build ordered list of candidates from providerChain, filtered by quota availability. */
+  private getChainCandidates(): AIModel[] {
+    return this.providerChain.filter((model) => this.state.hasQuota(model))
+  }
+
+  /** Increment quota only for models that have quota tracking. */
   private trackUsage(model: AIModel): void {
     if (model === 'claude' || model === 'codex') {
       this.state.incrementUsage(model)

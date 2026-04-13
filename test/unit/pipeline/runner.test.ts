@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { PipelineConfig, RepoConfig, Issue } from '../../../src/types/index.js'
+import type { PipelineConfig, RepoConfig, Issue, PRInfo } from '../../../src/types/index.js'
 
 // ---------------------------------------------------------------------------
 // Mocks
@@ -7,6 +7,14 @@ import type { PipelineConfig, RepoConfig, Issue } from '../../../src/types/index
 
 vi.mock('../../../src/pipeline/issue-processor.js', () => ({
   IssueProcessor: vi.fn(),
+}))
+
+vi.mock('../../../src/pipeline/merge-processor.js', () => ({
+  MergeProcessor: vi.fn(),
+}))
+
+vi.mock('../../../src/pipeline/spec-cache.js', () => ({
+  SpecCache: vi.fn(),
 }))
 
 vi.mock('../../../src/github/client.js', () => ({
@@ -23,6 +31,8 @@ vi.mock('../../../src/ai/router.js', () => ({
 
 vi.mock('../../../src/git/index.js', () => ({
   GitOperations: vi.fn(),
+  createTempDir: vi.fn(),
+  cleanupTempDir: vi.fn(),
 }))
 
 // ---------------------------------------------------------------------------
@@ -31,6 +41,7 @@ vi.mock('../../../src/git/index.js', () => ({
 
 import { PipelineRunner } from '../../../src/pipeline/runner.js'
 import { IssueProcessor } from '../../../src/pipeline/issue-processor.js'
+import { MergeProcessor } from '../../../src/pipeline/merge-processor.js'
 import { GitHubClient } from '../../../src/github/client.js'
 import { StateManager } from '../../../src/config/state.js'
 import { AIRouter } from '../../../src/ai/router.js'
@@ -51,6 +62,16 @@ function makeIssue(n: number): Issue {
   }
 }
 
+function makePR(n: number): PRInfo {
+  return {
+    number: n,
+    url: `https://github.com/acme/api/pull/${n}`,
+    isDraft: false,
+    head: `ai/${n}-some-issue`,
+    base: 'main',
+  }
+}
+
 const repo1: RepoConfig = { owner: 'acme', name: 'api' }
 const repo2: RepoConfig = { owner: 'acme', name: 'web' }
 
@@ -65,7 +86,13 @@ const baseConfig: PipelineConfig = {
 
 describe('PipelineRunner', () => {
   let processorMock: { processIssue: ReturnType<typeof vi.fn> }
-  let githubMock: { fetchOpenIssues: ReturnType<typeof vi.fn> }
+  let mergeProcessorMock: { processMergeRequest: ReturnType<typeof vi.fn> }
+  let githubMock: {
+    fetchOpenIssues: ReturnType<typeof vi.fn>
+    listOpenPRsWithLabel: ReturnType<typeof vi.fn>
+    listPRComments: ReturnType<typeof vi.fn>
+    mergePullRequest: ReturnType<typeof vi.fn>
+  }
   let stateMock: Record<string, unknown>
   let aiMock: Record<string, unknown>
   let runner: PipelineRunner
@@ -85,14 +112,27 @@ describe('PipelineRunner', () => {
       }),
     }
 
+    mergeProcessorMock = {
+      processMergeRequest: vi.fn().mockResolvedValue({
+        prNumber: 1,
+        repoFullName: 'acme/api',
+        merged: true,
+        conflictsResolved: 0,
+      }),
+    }
+
     githubMock = {
       fetchOpenIssues: vi.fn().mockResolvedValue([makeIssue(1)]),
+      listOpenPRsWithLabel: vi.fn().mockResolvedValue([]),
+      listPRComments: vi.fn().mockResolvedValue([]),
+      mergePullRequest: vi.fn().mockResolvedValue(undefined),
     }
 
     stateMock = {}
     aiMock = {}
 
     vi.mocked(IssueProcessor).mockImplementation(() => processorMock as unknown as IssueProcessor)
+    vi.mocked(MergeProcessor).mockImplementation(() => mergeProcessorMock as unknown as MergeProcessor)
     vi.mocked(GitHubClient).mockImplementation(() => githubMock as unknown as GitHubClient)
     vi.mocked(StateManager).mockImplementation(() => stateMock as unknown as StateManager)
     vi.mocked(AIRouter).mockImplementation(() => aiMock as unknown as AIRouter)
@@ -225,5 +265,147 @@ describe('PipelineRunner', () => {
     await defaultRunner.run()
 
     expect(processorMock.processIssue).toHaveBeenCalledTimes(10)
+  })
+
+  it('continues to next repo and increments failed count when fetchOpenIssues throws', async () => {
+    const config: PipelineConfig = { repos: [repo1, repo2], maxIssuesPerRun: 10 }
+
+    githubMock.fetchOpenIssues
+      .mockRejectedValueOnce(new Error('GitHub API rate limit'))
+      .mockResolvedValueOnce([makeIssue(1)])
+
+    const multiRunner = new PipelineRunner(
+      config,
+      githubMock as unknown as GitHubClient,
+      aiMock as unknown as AIRouter,
+      stateMock as unknown as StateManager,
+    )
+
+    const exitCode = await multiRunner.run()
+
+    // repo1 failed (fetch threw), repo2 succeeded — failed > 0 → exit code 1
+    expect(exitCode).toBe(1)
+    // processIssue called once for repo2's issue
+    expect(processorMock.processIssue).toHaveBeenCalledTimes(1)
+    expect(processorMock.processIssue).toHaveBeenCalledWith(repo2, makeIssue(1))
+  })
+
+  it('merge phase runs before issue processing', async () => {
+    const callOrder: string[] = []
+
+    githubMock.listOpenPRsWithLabel.mockImplementation(() => {
+      callOrder.push('listOpenPRsWithLabel')
+      return Promise.resolve([])
+    })
+
+    githubMock.fetchOpenIssues.mockImplementation(() => {
+      callOrder.push('fetchOpenIssues')
+      return Promise.resolve([makeIssue(1)])
+    })
+
+    processorMock.processIssue.mockImplementation(() => {
+      callOrder.push('processIssue')
+      return Promise.resolve({
+        success: true,
+        isDraft: false,
+        testsPassed: true,
+        issueNumber: 1,
+        repoFullName: 'acme/api',
+        modelUsed: 'claude',
+        filesChanged: [],
+      })
+    })
+
+    await runner.run()
+
+    // listOpenPRsWithLabel (merge phase) must appear before fetchOpenIssues and processIssue
+    const mergeIndex = callOrder.indexOf('listOpenPRsWithLabel')
+    const fetchIndex = callOrder.indexOf('fetchOpenIssues')
+    const processIndex = callOrder.indexOf('processIssue')
+    expect(mergeIndex).toBeGreaterThanOrEqual(0)
+    expect(mergeIndex).toBeLessThan(fetchIndex)
+    expect(fetchIndex).toBeLessThan(processIndex)
+  })
+
+  it('merge phase: calls processMergeRequest when PR comment contains trigger', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([
+      { id: 1, body: '/merge', user: 'dev', createdAt: '2024-01-01T00:00:00Z' },
+    ])
+
+    await runner.run()
+
+    expect(mergeProcessorMock.processMergeRequest).toHaveBeenCalledWith(repo1, pr)
+  })
+
+  it('merge phase: skips processMergeRequest when no trigger comment present', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([
+      { id: 1, body: 'looks good', user: 'dev', createdAt: '2024-01-01T00:00:00Z' },
+    ])
+
+    await runner.run()
+
+    expect(mergeProcessorMock.processMergeRequest).not.toHaveBeenCalled()
+  })
+
+  it('merge phase: skips draft PRs by default', async () => {
+    const draftPR: PRInfo = { ...makePR(10), isDraft: true }
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([draftPR])
+    githubMock.listPRComments.mockResolvedValue([
+      { id: 1, body: '/merge', user: 'dev', createdAt: '2024-01-01T00:00:00Z' },
+    ])
+
+    await runner.run()
+
+    expect(mergeProcessorMock.processMergeRequest).not.toHaveBeenCalled()
+  })
+
+  it('merge phase: processes draft PRs when mergeDraftPRs is true', async () => {
+    const config: PipelineConfig = { repos: [repo1], maxIssuesPerRun: 10, mergeDraftPRs: true }
+    const draftPR: PRInfo = { ...makePR(10), isDraft: true }
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([draftPR])
+    githubMock.listPRComments.mockResolvedValue([
+      { id: 1, body: '/merge', user: 'dev', createdAt: '2024-01-01T00:00:00Z' },
+    ])
+
+    const draftRunner = new PipelineRunner(
+      config,
+      githubMock as unknown as GitHubClient,
+      aiMock as unknown as AIRouter,
+      stateMock as unknown as StateManager,
+    )
+
+    await draftRunner.run()
+
+    expect(mergeProcessorMock.processMergeRequest).toHaveBeenCalledWith(repo1, draftPR)
+  })
+
+  it('merge phase: continues issue processing when listOpenPRsWithLabel throws', async () => {
+    githubMock.listOpenPRsWithLabel.mockRejectedValue(new Error('GitHub unavailable'))
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const code = await runner.run()
+    errorSpy.mockRestore()
+
+    // Issue processing should still run
+    expect(processorMock.processIssue).toHaveBeenCalledTimes(1)
+    expect(code).toBe(0)
+  })
+
+  it('merge phase: continues when individual PR comment fetch throws', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockRejectedValue(new Error('comments unavailable'))
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    await runner.run()
+    errorSpy.mockRestore()
+
+    expect(mergeProcessorMock.processMergeRequest).not.toHaveBeenCalled()
+    // Issue processing continues normally
+    expect(processorMock.processIssue).toHaveBeenCalledTimes(1)
   })
 })

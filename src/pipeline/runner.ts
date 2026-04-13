@@ -3,10 +3,13 @@ import type { GitHubClient } from '../github/client.js'
 import type { AIRouter } from '../ai/router.js'
 import type { PipelineConfig } from '../types/index.js'
 import { IssueProcessor } from './issue-processor.js'
+import { MergeProcessor } from './merge-processor.js'
+import { SpecCache } from './spec-cache.js'
 import { GitOperations } from '../git/index.js'
 
 export class PipelineRunner {
   private readonly processor: IssueProcessor
+  private readonly mergeProcessor: MergeProcessor
 
   constructor(
     private readonly config: PipelineConfig,
@@ -14,10 +17,17 @@ export class PipelineRunner {
     private readonly ai: AIRouter,
     private readonly state: StateManager,
   ) {
-    this.processor = new IssueProcessor(github, ai, new GitOperations(), state)
+    const specCache = new SpecCache()
+    const git = new GitOperations()
+    this.processor = new IssueProcessor(github, ai, git, state, specCache)
+    this.mergeProcessor = new MergeProcessor(github, ai, git, config)
   }
 
   async run(): Promise<number> {
+    // Phase 1: Check for merge-ready PRs
+    await this.processMergeRequests()
+
+    // Phase 2: Process new issues
     const maxIssues = this.config.maxIssuesPerRun ?? 10
     let processed = 0
     let succeeded = 0
@@ -55,5 +65,39 @@ export class PipelineRunner {
     console.log(`Pipeline complete: ${processed} processed, ${succeeded} succeeded, ${failed} failed`)
 
     return failed > 0 ? 1 : 0
+  }
+
+  private async processMergeRequests(): Promise<void> {
+    const trigger = this.config.mergeCommentTrigger ?? '/merge'
+    const allowDrafts = this.config.mergeDraftPRs ?? false
+
+    for (const repo of this.config.repos) {
+      try {
+        const prs = await this.github.listOpenPRsWithLabel(repo.owner, repo.name, 'ai-generated')
+
+        for (const pr of prs) {
+          if (pr.isDraft && !allowDrafts) continue
+
+          try {
+            const comments = await this.github.listPRComments(repo.owner, repo.name, pr.number)
+            const hasMergeComment = comments.some((c) => c.body.includes(trigger))
+
+            if (hasMergeComment) {
+              console.log(`[merge] Processing merge request for ${repo.owner}/${repo.name} PR #${pr.number}`)
+              const result = await this.mergeProcessor.processMergeRequest(repo, pr)
+              if (result.merged) {
+                console.log(`[merge] Merged PR #${pr.number} for ${repo.owner}/${repo.name}`)
+              } else {
+                console.warn(`[merge] Failed to merge PR #${pr.number}: ${result.error ?? 'unknown'}`)
+              }
+            }
+          } catch (err) {
+            console.error(`[merge] Error checking/merging PR #${pr.number}:`, err instanceof Error ? err.message : String(err))
+          }
+        }
+      } catch (err) {
+        console.error(`[merge] Failed to list PRs for ${repo.owner}/${repo.name}:`, err instanceof Error ? err.message : String(err))
+      }
+    }
   }
 }

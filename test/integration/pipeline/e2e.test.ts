@@ -208,6 +208,7 @@ function startFakeGitHubServer(): Promise<FakeServer> {
 function makeFakeAIProvider(model: AIModel): AIProvider {
   return {
     model,
+    handlesFullPipeline: false,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async invokeStructured<T>(_prompt: string, _schema: object): Promise<StructuredResult<T>> {
       // Return a minimal spec so IssueProcessor can proceed

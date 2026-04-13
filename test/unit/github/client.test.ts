@@ -11,6 +11,7 @@ vi.mock('@octokit/rest', () => {
   const mockGetPR = vi.fn()
   const mockGetRef = vi.fn()
   const mockDeleteRef = vi.fn()
+  const mockListPRs = vi.fn()
 
   const mockOctokit = {
     issues: {
@@ -22,6 +23,7 @@ vi.mock('@octokit/rest', () => {
       create: mockCreatePR,
       createReview: mockCreateReview,
       get: mockGetPR,
+      list: mockListPRs,
     },
     git: {
       getRef: mockGetRef,
@@ -51,6 +53,7 @@ function getMockOctokit() {
       create: Mock
       createReview: Mock
       get: Mock
+      list: Mock
     }
     git: {
       getRef: Mock
@@ -275,6 +278,25 @@ describe('GitHubClient', () => {
   })
 
   // -----------------------------------------------------------------------
+  // createPullRequest — error handling
+  // -----------------------------------------------------------------------
+  describe('createPullRequest error handling', () => {
+    it('re-throws 401 errors with GITHUB_TOKEN message', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.create.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.createPullRequest({ owner: 'acme', name: 'api', title: 't', body: 'b', head: 'h', base: 'main' })).rejects.toThrow(/GITHUB_TOKEN/i)
+    })
+
+    it('re-throws 404 errors with repo not found message', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.create.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+      const client = new GitHubClient()
+      await expect(client.createPullRequest({ owner: 'acme', name: 'api', title: 't', body: 'b', head: 'h', base: 'main' })).rejects.toThrow(/not found|no access/i)
+    })
+  })
+
+  // -----------------------------------------------------------------------
   // addLabel
   // -----------------------------------------------------------------------
   describe('addLabel', () => {
@@ -291,6 +313,25 @@ describe('GitHubClient', () => {
         issue_number: 42,
         labels: ['ai-generated'],
       })
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // addLabel — error handling
+  // -----------------------------------------------------------------------
+  describe('addLabel error handling', () => {
+    it('re-throws 401 errors with GITHUB_TOKEN message', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.addLabels.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.addLabel('acme', 'api', 42, 'ai-generated')).rejects.toThrow(/GITHUB_TOKEN/i)
+    })
+
+    it('re-throws 404 errors with repo not found message', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.addLabels.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+      const client = new GitHubClient()
+      await expect(client.addLabel('acme', 'api', 42, 'ai-generated')).rejects.toThrow(/not found|no access/i)
     })
   })
 
@@ -445,6 +486,221 @@ describe('GitHubClient', () => {
       await expect(client.fetchOpenIssues('acme', 'api')).rejects.toThrow(
         /not found|no access|repository/i
       )
+    })
+
+    it('re-throws plain Error objects without modification', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.listForRepo.mockRejectedValueOnce(new Error('Network timeout'))
+      const client = new GitHubClient()
+      await expect(client.fetchOpenIssues('acme', 'api')).rejects.toThrow('Network timeout')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // fetchOpenPRForBranch
+  // -----------------------------------------------------------------------
+  describe('fetchOpenPRForBranch', () => {
+    it('returns PRResult when an open PR exists for the branch', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.list.mockResolvedValueOnce({
+        data: [{ number: 99, html_url: 'https://github.com/acme/api/pull/99', draft: false }],
+      })
+      const client = new GitHubClient()
+      const result = await client.fetchOpenPRForBranch('acme', 'api', 'fix/branch')
+      expect(result).toMatchObject({ number: 99, url: 'https://github.com/acme/api/pull/99', isDraft: false })
+    })
+
+    it('returns null when no open PR exists', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.list.mockResolvedValueOnce({ data: [] })
+      const client = new GitHubClient()
+      const result = await client.fetchOpenPRForBranch('acme', 'api', 'fix/branch')
+      expect(result).toBeNull()
+    })
+
+    it('returns isDraft true for draft PRs', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.list.mockResolvedValueOnce({
+        data: [{ number: 100, html_url: 'https://github.com/acme/api/pull/100', draft: true }],
+      })
+      const client = new GitHubClient()
+      const result = await client.fetchOpenPRForBranch('acme', 'api', 'fix/branch')
+      expect(result?.isDraft).toBe(true)
+    })
+
+    it('defaults isDraft to false when draft is undefined', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.list.mockResolvedValueOnce({
+        data: [{ number: 101, html_url: 'https://github.com/acme/api/pull/101', draft: undefined }],
+      })
+      const client = new GitHubClient()
+      const result = await client.fetchOpenPRForBranch('acme', 'api', 'fix/branch')
+      expect(result?.isDraft).toBe(false)
+    })
+
+    it('re-throws 401 errors with GITHUB_TOKEN message', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.list.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.fetchOpenPRForBranch('acme', 'api', 'fix/branch')).rejects.toThrow(/GITHUB_TOKEN/i)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // branchExists — additional branch coverage
+  // -----------------------------------------------------------------------
+  describe('branchExists non-404 error', () => {
+    it('re-throws non-404 errors', async () => {
+      const mocks = getMockOctokit()
+      const serverError = Object.assign(new Error('Internal Server Error'), { status: 500 })
+      mocks.git.getRef.mockRejectedValueOnce(serverError)
+      const client = new GitHubClient()
+      await expect(client.branchExists('acme', 'api', 'main')).rejects.toThrow('Internal Server Error')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // Constructor with baseUrl
+  // -----------------------------------------------------------------------
+  describe('constructor with baseUrl', () => {
+    it('passes baseUrl to Octokit constructor', () => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const OctokitConstructor = vi.mocked((OctokitModule as any).Octokit)
+      new GitHubClient('token', 'https://custom.github.com/api/v3')
+      expect(OctokitConstructor).toHaveBeenCalledWith(
+        expect.objectContaining({ baseUrl: 'https://custom.github.com/api/v3' })
+      )
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // createPullRequest with draft undefined in response
+  // -----------------------------------------------------------------------
+  describe('createPullRequest draft undefined', () => {
+    it('defaults isDraft to false when response.draft is undefined', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.create.mockResolvedValueOnce({
+        data: { number: 44, html_url: 'https://github.com/acme/api/pull/44', draft: undefined },
+      })
+      const client = new GitHubClient()
+      const result = await client.createPullRequest({
+        owner: 'acme',
+        name: 'api',
+        title: 't',
+        body: 'b',
+        head: 'h',
+        base: 'main',
+      })
+      expect(result.isDraft).toBe(false)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // fetchOpenIssues — pagination stops when link header is missing
+  // -----------------------------------------------------------------------
+  describe('fetchOpenIssues pagination', () => {
+    it('stops pagination when link header is missing', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.listForRepo.mockResolvedValueOnce({
+        data: [{ id: 1, number: 1, title: 'Issue', body: '', html_url: 'url' }],
+        headers: {},
+      })
+      const client = new GitHubClient()
+      const issues = await client.fetchOpenIssues('acme', 'api')
+      expect(mocks.issues.listForRepo).toHaveBeenCalledTimes(1)
+      expect(issues).toHaveLength(1)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // fetchOpenIssues — null body defaults to empty string
+  // -----------------------------------------------------------------------
+  describe('fetchOpenIssues null body', () => {
+    it('maps null body to empty string', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.listForRepo.mockResolvedValueOnce({
+        data: [{ id: 5, number: 5, title: 'No body', body: null, html_url: 'https://github.com/acme/api/issues/5' }],
+        headers: {},
+      })
+      const client = new GitHubClient()
+      const issues = await client.fetchOpenIssues('acme', 'api')
+      expect(issues[0]?.body).toBe('')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // getPRDiff — error handling
+  // -----------------------------------------------------------------------
+  describe('getPRDiff error handling', () => {
+    it('re-throws 401 errors with GITHUB_TOKEN message', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.get.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.getPRDiff('acme', 'api', 42)).rejects.toThrow(/GITHUB_TOKEN/i)
+    })
+
+    it('re-throws 404 errors with repo not found message', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.get.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+      const client = new GitHubClient()
+      await expect(client.getPRDiff('acme', 'api', 42)).rejects.toThrow(/not found|no access/i)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // deleteRemoteBranch — error handling
+  // -----------------------------------------------------------------------
+  describe('deleteRemoteBranch error handling', () => {
+    it('re-throws 401 errors with GITHUB_TOKEN message', async () => {
+      const mocks = getMockOctokit()
+      mocks.git.deleteRef.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.deleteRemoteBranch('acme', 'api', 'fix/branch')).rejects.toThrow(/GITHUB_TOKEN/i)
+    })
+
+    it('re-throws 404 errors with repo not found message', async () => {
+      const mocks = getMockOctokit()
+      mocks.git.deleteRef.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+      const client = new GitHubClient()
+      await expect(client.deleteRemoteBranch('acme', 'api', 'fix/branch')).rejects.toThrow(/not found|no access/i)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // postIssueComment — error handling
+  // -----------------------------------------------------------------------
+  describe('postIssueComment error handling', () => {
+    it('re-throws 401 errors with GITHUB_TOKEN message', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.createComment.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.postIssueComment('acme', 'api', 10, 'body')).rejects.toThrow(/GITHUB_TOKEN/i)
+    })
+
+    it('re-throws 404 errors with repo not found message', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.createComment.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+      const client = new GitHubClient()
+      await expect(client.postIssueComment('acme', 'api', 10, 'body')).rejects.toThrow(/not found|no access/i)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // postReviewComments — error handling
+  // -----------------------------------------------------------------------
+  describe('postReviewComments error handling', () => {
+    it('re-throws 401 errors with GITHUB_TOKEN message', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.createReview.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.postReviewComments('acme', 'api', 42, [])).rejects.toThrow(/GITHUB_TOKEN/i)
+    })
+
+    it('re-throws 404 errors with repo not found message', async () => {
+      const mocks = getMockOctokit()
+      mocks.pulls.createReview.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+      const client = new GitHubClient()
+      await expect(client.postReviewComments('acme', 'api', 42, [])).rejects.toThrow(/not found|no access/i)
     })
   })
 })

@@ -17,6 +17,7 @@ vi.mock('../../src/ai/index.js', () => ({
   ClaudeWrapper: vi.fn(),
   CodexWrapper: vi.fn(),
   OllamaWrapper: vi.fn(),
+  MAPWrapper: vi.fn(),
 }))
 
 vi.mock('../../src/config/index.js', () => ({
@@ -39,7 +40,7 @@ vi.mock('node:fs', async (importOriginal) => {
 import { run } from '../../src/index.js'
 import { PipelineRunner } from '../../src/pipeline/index.js'
 import { GitHubClient } from '../../src/github/index.js'
-import { AIRouter, ClaudeWrapper, CodexWrapper, OllamaWrapper } from '../../src/ai/index.js'
+import { AIRouter, ClaudeWrapper, CodexWrapper, OllamaWrapper, MAPWrapper } from '../../src/ai/index.js'
 import { StateManager, loadConfig } from '../../src/config/index.js'
 import { existsSync } from 'node:fs'
 
@@ -70,6 +71,7 @@ describe('CLI run()', () => {
     vi.mocked(ClaudeWrapper).mockImplementation(() => ({}) as unknown as ClaudeWrapper)
     vi.mocked(CodexWrapper).mockImplementation(() => ({}) as unknown as CodexWrapper)
     vi.mocked(OllamaWrapper).mockImplementation(() => ({}) as unknown as OllamaWrapper)
+    vi.mocked(MAPWrapper).mockImplementation(() => ({}) as unknown as MAPWrapper)
     vi.mocked(AIRouter).mockImplementation(() => ({}) as unknown as AIRouter)
   })
 

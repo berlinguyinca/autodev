@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { readFileSync } from 'node:fs'
-import type { PipelineConfig, RepoConfig } from '../types/index.js'
+import { parse as parseYAML } from 'yaml'
+import type { PipelineConfig, RepoConfig, PipelineTask, TaskModelConfig } from '../types/index.js'
 
 const RepoConfigSchema = z.object({
   owner: z.string().min(1),
@@ -8,6 +9,20 @@ const RepoConfigSchema = z.object({
   defaultBranch: z.string().default('main'),
   testCommand: z.string().optional(),
   cloneUrl: z.string().optional(),
+})
+
+const AIModelSchema = z.enum(['claude', 'codex', 'ollama', 'map'])
+
+const PipelineTaskSchema = z.enum(['specGeneration', 'implementation', 'codeReview', 'conflictResolution'])
+
+const TaskModelConfigSchema = z.object({
+  provider: AIModelSchema,
+  model: z.string().optional(),
+})
+
+const RetryConfigSchema = z.object({
+  maxAttempts: z.number().int().positive().default(3),
+  backoffMinutes: z.number().positive().default(60),
 })
 
 const PipelineConfigSchema = z.object({
@@ -20,6 +35,12 @@ const PipelineConfigSchema = z.object({
       codex: z.number().int().positive().optional(),
     })
     .optional(),
+  providerChain: z.array(AIModelSchema).optional(),
+  taskModels: z.record(PipelineTaskSchema, TaskModelConfigSchema).optional(),
+  retry: RetryConfigSchema.optional(),
+  mergeCommentTrigger: z.string().default('/merge'),
+  mergeMethod: z.enum(['merge', 'squash', 'rebase']).default('merge'),
+  mergeDraftPRs: z.boolean().default(false),
 })
 
 type ZodParsed = z.infer<typeof PipelineConfigSchema>
@@ -44,6 +65,36 @@ function toTyped(parsed: ZodParsed): PipelineConfig {
     config.quotaLimits = limits
   }
 
+  if (parsed.providerChain !== undefined) {
+    config.providerChain = parsed.providerChain
+  }
+
+  if (parsed.taskModels !== undefined) {
+    const taskModels: Partial<Record<PipelineTask, TaskModelConfig>> = {}
+    for (const [task, cfg] of Object.entries(parsed.taskModels)) {
+      const entry: TaskModelConfig = { provider: cfg.provider }
+      if (cfg.model !== undefined) entry.model = cfg.model
+      taskModels[task as PipelineTask] = entry
+    }
+    config.taskModels = taskModels
+  }
+
+  if (parsed.retry !== undefined) {
+    config.retry = parsed.retry
+  }
+
+  if (parsed.mergeCommentTrigger !== '/merge') {
+    config.mergeCommentTrigger = parsed.mergeCommentTrigger
+  }
+
+  if (parsed.mergeMethod !== 'merge') {
+    config.mergeMethod = parsed.mergeMethod
+  }
+
+  if (parsed.mergeDraftPRs) {
+    config.mergeDraftPRs = parsed.mergeDraftPRs
+  }
+
   return config
 }
 
@@ -57,11 +108,13 @@ export function loadConfig(configPath: string): PipelineConfig {
   }
 
   let parsed: unknown
+  const isYAML = configPath.endsWith('.yaml') || configPath.endsWith('.yml')
   try {
-    parsed = JSON.parse(raw)
+    parsed = isYAML ? parseYAML(raw) : JSON.parse(raw)
   } catch (err) {
+    const format = isYAML ? 'YAML' : 'JSON'
     const message = err instanceof Error ? err.message : String(err)
-    throw new Error(`Invalid JSON in config file "${configPath}": ${message}`)
+    throw new Error(`Invalid ${format} in config file "${configPath}": ${message}`)
   }
 
   const result = PipelineConfigSchema.safeParse(parsed)

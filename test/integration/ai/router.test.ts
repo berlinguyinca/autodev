@@ -47,6 +47,7 @@ function currentUtcMonth(): string {
 function makeInstantProvider(model: AIModel): AIProvider {
   return {
     model,
+    handlesFullPipeline: false,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async invokeStructured<T>(_prompt: string, _schema: object): Promise<StructuredResult<T>> {
       return { success: true, data: { model } as unknown as T, rawOutput: '' }
@@ -62,6 +63,7 @@ function makeInstantProvider(model: AIModel): AIProvider {
 function makeNotFoundProvider(model: AIModel): AIProvider {
   return {
     model,
+    handlesFullPipeline: false,
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     async invokeStructured<T>(_prompt: string, _schema: object): Promise<StructuredResult<T>> {
       throw new AIBinaryNotFoundError(model)

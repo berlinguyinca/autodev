@@ -1,0 +1,82 @@
+# gh-issue-pipeline configuration
+# Copy to config.yaml and adjust to your needs.
+# The pipeline also accepts repos.json for backward compatibility.
+
+# Repositories to process
+repos:
+  - owner: my-org
+    name: my-repo
+    defaultBranch: main
+    testCommand: pnpm test
+  - owner: my-org
+    name: another-repo
+    defaultBranch: develop
+    testCommand: npm test
+
+# Maximum number of issues to process per run (default: 10)
+maxIssuesPerRun: 10
+
+# Default Ollama model used when Ollama is in the provider chain (default: qwen2.5-coder:latest)
+ollamaModel: qwen2.5-coder:latest
+
+# Optional monthly quota limits for hosted AI providers
+quotaLimits:
+  claude: 200
+  codex: 100
+
+# Provider chain — ordered list of AI models to try (first available wins).
+# Supported values: claude, codex, ollama, map
+# Default when omitted: [claude, codex, ollama]
+providerChain:
+  - map
+  - claude
+  - codex
+  - ollama
+
+# Per-task model configuration — override which provider handles specific tasks.
+# If a task is not listed here, the normal providerChain is used.
+taskModels:
+  conflictResolution:
+    provider: ollama
+    model: gemma3:latest
+  codeReview:
+    provider: claude
+  specGeneration:
+    provider: claude
+  implementation:
+    provider: claude
+
+# Retry configuration for failed issues
+retry:
+  maxAttempts: 3        # max retries per issue (default: 3)
+  backoffMinutes: 60    # minimum wait between retries (default: 60)
+
+# Auto-merge settings
+# When a user comments the trigger phrase on a pipeline-created PR,
+# the pipeline will rebase the branch and merge it on the next run.
+mergeCommentTrigger: '/merge'     # comment text that triggers merge (default: '/merge')
+mergeMethod: merge                # merge | squash | rebase (default: merge)
+mergeDraftPRs: false              # allow merging draft PRs (default: false)
+
+# Per-provider configuration
+providers:
+  map:
+    timeoutMs: 120000
+    model: claude-sonnet-4-5
+    quota: 50
+    agents:
+      spec:
+        adapter: claude
+      review:
+        adapter: claude
+      execute:
+        adapter: claude
+  claude:
+    timeoutMs: 90000
+    quota: 200
+  codex:
+    timeoutMs: 60000
+    quota: 100
+  ollama:
+    timeoutMs: 300000
+    model: qwen2.5-coder:latest

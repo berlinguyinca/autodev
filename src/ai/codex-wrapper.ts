@@ -1,6 +1,5 @@
-import { readdirSync, statSync } from 'node:fs'
-import { join } from 'node:path'
 import { invokeProcess } from './base-wrapper.js'
+import { scanModifiedFiles } from './file-scanner.js'
 import { AIInvocationError } from './errors.js'
 import type { AIProvider, AIModel, AgentResult, StructuredResult } from '../types/index.js'
 
@@ -41,37 +40,17 @@ function parseCodexStructured<T>(stdout: string): T {
   }
 }
 
-function scanModifiedFiles(workingDir: string, beforeMs: number): string[] {
-  const results: string[] = []
-  try {
-    for (const entry of readdirSync(workingDir, { recursive: true, withFileTypes: true })) {
-      if (!entry.isFile()) continue
-      const dir = 'path' in entry && typeof entry.path === 'string' ? entry.path : workingDir
-      const fullPath = join(dir, entry.name)
-      try {
-        const st = statSync(fullPath)
-        if (st.mtimeMs >= beforeMs) {
-          results.push(fullPath)
-        }
-      } catch {
-        // skip unreadable files
-      }
-    }
-  } catch {
-    // workingDir not readable — return empty
-  }
-  return results
-}
-
 export class CodexWrapper implements AIProvider {
   readonly model: AIModel = 'codex'
+  readonly handlesFullPipeline = false
 
   constructor(
     private readonly structuredTimeoutMs = DEFAULT_STRUCTURED_TIMEOUT_MS,
     private readonly agentTimeoutMs = DEFAULT_AGENT_TIMEOUT_MS
   ) {}
 
-  async invokeStructured<T>(prompt: string, schema: object): Promise<StructuredResult<T>> {
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  async invokeStructured<T>(prompt: string, schema: object, _modelOverride?: string): Promise<StructuredResult<T>> {
     const args = ['exec', '--json', JSON.stringify(schema), prompt]
 
     try {

@@ -48,6 +48,7 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
   const [formField, setFormField] = useState<FormField>('title')
   const [comments, setComments] = useState<Array<{ author: string; body: string; createdAt: string }>>([])
   const [commentText, setCommentText] = useState('')
+  const [commentsExpanded, setCommentsExpanded] = useState(false)
 
   // Table state
   const [openIssues, setOpenIssues] = useState<Array<{ number: number; title: string; labels: string[] }>>([])
@@ -191,6 +192,7 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
     setEditingIssue(undefined)
     setComments([])
     setCommentText('')
+    setCommentsExpanded(false)
   }, [])
 
   // Handle vim : commands
@@ -435,6 +437,8 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
       else if (field === 'body') setBody('')
     } else if (action === 'help') {
       setShowHelp((h) => !h)
+    } else if (action === 'toggle-comments') {
+      setCommentsExpanded((e) => !e)
     } else if (action === 'close-issue') {
       const editing = editingIssueRef.current
       const repo = selectedRepoRef.current
@@ -509,6 +513,7 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
                   comments={comments}
                   commentText={commentText}
                   onCommentChange={setCommentText}
+                  commentsExpanded={commentsExpanded}
                 />
               }
               right={

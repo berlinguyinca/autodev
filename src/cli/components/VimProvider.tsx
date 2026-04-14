@@ -231,6 +231,10 @@ export function VimProvider({
           setModeSync('insert')
           return
         }
+        if (input === 'E') {
+          onActionRef.current?.('toggle-comments')
+          return
+        }
         if (input === ':') {
           setModeSync('command')
           setCommandBufferSync('')
@@ -298,6 +302,11 @@ export function VimProvider({
       if (input === 'c') {
         onActionRef.current?.('focus-comment')
         setModeSync('insert')
+        return
+      }
+
+      if (input === 'E') {
+        onActionRef.current?.('toggle-comments')
         return
       }
 

@@ -17,11 +17,12 @@ interface IssueFormProps {
   comments: IssueComment[]
   commentText: string
   onCommentChange: (v: string) => void
+  commentsExpanded?: boolean
 }
 
 export function IssueForm({
   title, body, labels, onTitleChange, onBodyChange, active, editingIssue, formField,
-  comments, commentText, onCommentChange,
+  comments, commentText, onCommentChange, commentsExpanded,
 }: IssueFormProps): React.JSX.Element {
   const borderColor = active ? colors.overalls : colors.dim
 
@@ -63,14 +64,24 @@ export function IssueForm({
       </Box>
       {editingIssue !== undefined && (
         <Box flexDirection="column" marginTop={1}>
-          <Text color={colors.dim}>{'── Comments (' + comments.length + ') ──'}</Text>
+          <Text color={colors.dim}>{'── Comments (' + comments.length + ') ' + (commentsExpanded ? '[-]' : '[+]') + ' ──'}</Text>
           {comments.map((c, i) => (
-            <Box key={i}>
-              <Text wrap="truncate-end">
-                <Text color={colors.goggle}>@{c.author}</Text>
-                <Text color={colors.dim}>{': '}</Text>
-                <Text>{c.body.split('\n')[0] ?? ''}</Text>
-              </Text>
+            <Box key={i} flexDirection="column">
+              {commentsExpanded ? (
+                <>
+                  <Text color={colors.goggle} bold>@{c.author}</Text>
+                  <Box marginLeft={2}>
+                    <Text wrap="wrap">{c.body}</Text>
+                  </Box>
+                  {i < comments.length - 1 && <Text color={colors.dim}>{'─'.repeat(20)}</Text>}
+                </>
+              ) : (
+                <Text wrap="truncate-end">
+                  <Text color={colors.goggle}>@{c.author}</Text>
+                  <Text color={colors.dim}>{': '}</Text>
+                  <Text>{c.body.split('\n')[0] ?? ''}</Text>
+                </Text>
+              )}
             </Box>
           ))}
           <Box marginTop={1}>

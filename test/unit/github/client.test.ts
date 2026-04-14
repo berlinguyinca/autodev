@@ -839,20 +839,20 @@ describe('GitHubClient', () => {
   // listUserRepos
   // -----------------------------------------------------------------------
   describe('listUserRepos', () => {
-    it('returns repos with owner, name, description', async () => {
+    it('returns repos with owner, name, description, pushedAt', async () => {
       const mocks = getMockOctokit()
       mocks.repos.listForAuthenticatedUser.mockResolvedValueOnce({
         data: [
-          { owner: { login: 'alice' }, name: 'app', description: 'My app' },
-          { owner: { login: 'org' }, name: 'lib', description: null },
+          { owner: { login: 'alice' }, name: 'app', description: 'My app', pushed_at: '2024-01-15T10:00:00Z' },
+          { owner: { login: 'org' }, name: 'lib', description: null, pushed_at: null },
         ],
         headers: {},
       })
       const client = new GitHubClient()
       const repos = await client.listUserRepos()
       expect(repos).toEqual([
-        { owner: 'alice', name: 'app', description: 'My app' },
-        { owner: 'org', name: 'lib', description: '' },
+        { owner: 'alice', name: 'app', description: 'My app', pushedAt: '2024-01-15T10:00:00Z' },
+        { owner: 'org', name: 'lib', description: '', pushedAt: '' },
       ])
     })
 
@@ -860,11 +860,11 @@ describe('GitHubClient', () => {
       const mocks = getMockOctokit()
       mocks.repos.listForAuthenticatedUser
         .mockResolvedValueOnce({
-          data: [{ owner: { login: 'alice' }, name: 'app1', description: '' }],
+          data: [{ owner: { login: 'alice' }, name: 'app1', description: '', pushed_at: '2024-01-10T00:00:00Z' }],
           headers: { link: '<url>; rel="next"' },
         })
         .mockResolvedValueOnce({
-          data: [{ owner: { login: 'alice' }, name: 'app2', description: '' }],
+          data: [{ owner: { login: 'alice' }, name: 'app2', description: '', pushed_at: '2024-01-09T00:00:00Z' }],
           headers: {},
         })
       const client = new GitHubClient()

@@ -98,22 +98,28 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
   // Fetch repos on startup
   useEffect(() => {
     void (async () => {
-      let apiRepos: RepoChoice[] = []
+      let apiRepos: Array<RepoChoice & { pushedAt: string }> = []
       try {
         const fetched = await deps.listUserRepos()
-        apiRepos = fetched.map((r) => ({ owner: r.owner, name: r.name }))
+        apiRepos = fetched.map((r) => ({ owner: r.owner, name: r.name, pushedAt: r.pushedAt }))
       } catch {
         // Fall back to config repos only
       }
 
+      // Build a pushedAt lookup from API results
+      const pushedAtMap = new Map<string, string>()
+      for (const r of apiRepos) {
+        pushedAtMap.set(`${r.owner}/${r.name}`, r.pushedAt)
+      }
+
       // Merge config repos + API repos (dedup)
       const seen = new Set<string>()
-      const merged: RepoChoice[] = []
+      const merged: Array<RepoChoice & { pushedAt: string }> = []
       for (const r of deps.configRepos) {
         const key = `${r.owner}/${r.name}`
         if (!seen.has(key)) {
           seen.add(key)
-          merged.push({ owner: r.owner, name: r.name })
+          merged.push({ owner: r.owner, name: r.name, pushedAt: pushedAtMap.get(key) ?? '' })
         }
       }
       for (const r of apiRepos) {
@@ -123,6 +129,15 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
           merged.push(r)
         }
       }
+
+      // Sort by pushedAt descending; repos with empty pushedAt go to end
+      merged.sort((a, b) => {
+        if (a.pushedAt === '' && b.pushedAt === '') return 0
+        if (a.pushedAt === '') return 1
+        if (b.pushedAt === '') return -1
+        return b.pushedAt.localeCompare(a.pushedAt)
+      })
+
       setRepos(merged)
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps

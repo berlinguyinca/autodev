@@ -31,4 +31,12 @@ describe('HelpOverlay', () => {
     const { lastFrame } = render(<HelpOverlay />)
     expect(lastFrame()).toContain('Press ? to close')
   })
+
+  it('shows close and comment keybindings', () => {
+    const { lastFrame } = render(<HelpOverlay />)
+    expect(lastFrame()).toContain('close issue')
+    expect(lastFrame()).toContain('comment')
+    expect(lastFrame()).toContain(':close')
+    expect(lastFrame()).toContain(':comment')
+  })
 })

@@ -30,6 +30,8 @@ export function HelpOverlay(): React.JSX.Element {
           <Text>{'p    polish'}</Text>
           <Text>{'r    refresh'}</Text>
           <Text>{'dd   clear'}</Text>
+          <Text>{'x    close issue'}</Text>
+          <Text>{'c    comment'}</Text>
           <Text>{'Esc  cancel'}</Text>
         </Box>
 
@@ -41,6 +43,8 @@ export function HelpOverlay(): React.JSX.Element {
           <Text>{':wq  save & quit'}</Text>
           <Text>{':e   clear form'}</Text>
           <Text>{':repo switch repo'}</Text>
+          <Text>{':close close issue'}</Text>
+          <Text>{':comment comment'}</Text>
         </Box>
       </Box>
 

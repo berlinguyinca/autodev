@@ -24,7 +24,7 @@ export function IssueTable({ openIssues, recentIssues, active, cursor, tab }: Is
             <Box width={5} flexShrink={0}>
               <Text color={colors.dim}>#{issue.number}</Text>
             </Box>
-            <Box flexGrow={1} flexShrink={1}>
+            <Box flexGrow={1} flexShrink={1} flexBasis={0}>
               <Text wrap="truncate-end">{issue.title}</Text>
             </Box>
             {issue.labels.length > 0 && (
@@ -45,7 +45,7 @@ export function IssueTable({ openIssues, recentIssues, active, cursor, tab }: Is
             <Box width={5} flexShrink={0}>
               <Text color={colors.dim}>#{issue.number}</Text>
             </Box>
-            <Box flexGrow={1} flexShrink={1}>
+            <Box flexGrow={1} flexShrink={1} flexBasis={0}>
               <Text wrap="truncate-end">{issue.title}</Text>
             </Box>
             <Box flexShrink={0} marginLeft={1}>

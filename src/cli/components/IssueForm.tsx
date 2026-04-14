@@ -5,8 +5,32 @@ import type { FormField } from '../hooks/useVim.js'
 import { colors, messages } from '../theme.js'
 import type { IssueComment } from '../../types/index.js'
 
-function truncate(s: string, max: number): string {
-  return s.length > max ? s.slice(0, max - 1) + '…' : s
+// Estimate terminal display width — emojis and wide chars take 2 columns
+// eslint-disable-next-line no-control-regex
+const WIDE_RE = /[\u{1F000}-\u{1FFFF}]|[\u{2600}-\u{27BF}]|[\u{FE00}-\u{FE0F}]|[\u{E000}-\u{F8FF}]|[\u{2702}-\u{27B0}]|[\u{1F680}-\u{1F6FF}]|[\u{1F900}-\u{1F9FF}]|[\u{2500}-\u{257F}]|[\u{2700}-\u{27BF}]|[✅❌⚠️✓✗⬆⬇➡⬅★☆♥♦♣♠]/gu
+
+function displayWidth(s: string): number {
+  let w = 0
+  for (const ch of s) {
+    w += WIDE_RE.test(ch) ? 2 : 1
+    WIDE_RE.lastIndex = 0
+  }
+  return w
+}
+
+function truncate(s: string, maxWidth: number): string {
+  let w = 0
+  let i = 0
+  for (const ch of s) {
+    const cw = WIDE_RE.test(ch) ? 2 : 1
+    WIDE_RE.lastIndex = 0
+    if (w + cw > maxWidth - 1) {
+      return s.slice(0, i) + '…'
+    }
+    w += cw
+    i += ch.length
+  }
+  return s
 }
 
 interface IssueFormProps {
@@ -29,8 +53,8 @@ export function IssueForm({
   comments, commentText, onCommentChange, commentsExpanded,
 }: IssueFormProps): React.JSX.Element {
   const { stdout } = useStdout()
-  // Left pane is ~60% of terminal, minus borders(2), padding(2), indent(2)
-  const commentMaxWidth = Math.floor((stdout?.columns ?? 120) * 0.6) - 8
+  // Left pane is ~60% of terminal, minus borders(2), padding(2), indent(2), safety buffer(4)
+  const commentMaxWidth = Math.floor((stdout?.columns ?? 120) * 0.6) - 12
   const borderColor = active ? colors.overalls : colors.dim
 
   const header = editingIssue !== undefined

@@ -22,7 +22,6 @@ export interface RepoConfig {
 
 export interface ProviderConfig {
   timeoutMs?: number;
-  quota?: number;
   model?: string;
   agents?: {
     spec?: { adapter: 'claude' | 'codex' | 'ollama' };
@@ -31,37 +30,16 @@ export interface ProviderConfig {
   };
 }
 
-export type PipelineTask = 'specGeneration' | 'implementation' | 'codeReview' | 'conflictResolution' | 'prReview'
-
-export interface TaskModelConfig {
-  provider: AIModel
-  model?: string        // e.g., 'gemma3:latest' for Ollama
-}
-
 export interface RetryConfig {
   maxAttempts: number
   backoffMinutes: number
 }
 
-export interface SecurityIssue {
-  severity: 'critical' | 'high' | 'medium' | 'low'
-  file: string
-  line: number
-  description: string
-  suggestedFix: string
-}
-
 export interface PipelineConfig {
   repos: RepoConfig[];
-  ollamaModel?: string;
   maxIssuesPerRun?: number;
-  quotaLimits?: {
-    claude?: number;
-    codex?: number;
-  };
-  providerChain?: AIModel[];
-  providers?: Partial<Record<string, ProviderConfig>>;
-  taskModels?: Partial<Record<PipelineTask, TaskModelConfig>>;
+  mapModel?: string;
+  mapTimeoutMs?: number;
   retry?: RetryConfig;
   mergeCommentTrigger?: string;
   mergeMethod?: 'merge' | 'squash' | 'rebase';
@@ -70,12 +48,6 @@ export interface PipelineConfig {
   autoMergeRequireTests?: boolean;
   maxPollRuns?: number;
   maxConsecutiveFailures?: number;
-}
-
-export interface QuotaState {
-  used: number;
-  limit: number;
-  resetMonth: string; // "YYYY-MM" format, UTC
 }
 
 export interface IssueOutcome {
@@ -96,11 +68,10 @@ export interface PROutcome {
 export interface PipelineState {
   processedIssues: Record<string, Record<number, IssueOutcome>>; // "owner/name" -> { issueNumber: outcome }
   reviewedPRs?: Record<string, Record<number, PROutcome>>;      // "owner/name" -> { prNumber: outcome }
-  quota: Record<string, QuotaState>; // keyed by AIModel values (extensible)
   starPromptSeen?: boolean;
 }
 
-export type AIModel = "claude" | "codex" | "ollama" | "map";
+export type AIModel = "map";
 
 export interface AgentResult {
   success: boolean;

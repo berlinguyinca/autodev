@@ -411,8 +411,8 @@ export class GitHubClient {
     return allLabels.sort()
   }
 
-  async listUserRepos(): Promise<Array<{ owner: string; name: string; description: string }>> {
-    const allRepos: Array<{ owner: string; name: string; description: string }> = []
+  async listUserRepos(): Promise<Array<{ owner: string; name: string; description: string; pushedAt: string }>> {
+    const allRepos: Array<{ owner: string; name: string; description: string; pushedAt: string }> = []
     let page = 1
     let hasNextPage = true
 
@@ -420,7 +420,7 @@ export class GitHubClient {
       try {
         const response = await this.octokit.repos.listForAuthenticatedUser({
           per_page: 100,
-          sort: 'updated',
+          sort: 'pushed',
           affiliation: 'owner,collaborator,organization_member',
           page,
         })
@@ -430,6 +430,7 @@ export class GitHubClient {
             owner: repo.owner.login,
             name: repo.name,
             description: repo.description ?? '',
+            pushedAt: repo.pushed_at ?? '',
           })
         }
 

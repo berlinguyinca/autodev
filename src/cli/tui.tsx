@@ -7,6 +7,7 @@ import { IssueTable } from './components/IssueTable.js'
 import { StatusBar } from './components/StatusBar.js'
 import { MessageToast } from './components/MessageToast.js'
 import { SplitPane } from './components/SplitPane.js'
+import { HelpOverlay } from './components/HelpOverlay.js'
 import { DepsContext, type TuiDeps } from './hooks/useDeps.js'
 import { messages } from './theme.js'
 import type { Pane, FormField } from './hooks/useVim.js'
@@ -25,6 +26,7 @@ interface RecentIssue {
 interface RepoChoice {
   owner: string
   name: string
+  pushedAt?: string | undefined
 }
 
 function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
@@ -51,6 +53,7 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
 
   // UI state
   const [pane, setPane] = useState<Pane>('form')
+  const [showHelp, setShowHelp] = useState(false)
   const [statusMessage, setStatusMessage] = useState('')
   const [messageVariant, setMessageVariant] = useState<'success' | 'error' | undefined>(undefined)
 
@@ -98,22 +101,28 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
   // Fetch repos on startup
   useEffect(() => {
     void (async () => {
-      let apiRepos: RepoChoice[] = []
+      let apiRepos: Array<RepoChoice & { pushedAt: string }> = []
       try {
         const fetched = await deps.listUserRepos()
-        apiRepos = fetched.map((r) => ({ owner: r.owner, name: r.name }))
+        apiRepos = fetched.map((r) => ({ owner: r.owner, name: r.name, pushedAt: r.pushedAt }))
       } catch {
         // Fall back to config repos only
       }
 
+      // Build a pushedAt lookup from API results
+      const pushedAtMap = new Map<string, string>()
+      for (const r of apiRepos) {
+        pushedAtMap.set(`${r.owner}/${r.name}`, r.pushedAt)
+      }
+
       // Merge config repos + API repos (dedup)
       const seen = new Set<string>()
-      const merged: RepoChoice[] = []
+      const merged: Array<RepoChoice & { pushedAt: string }> = []
       for (const r of deps.configRepos) {
         const key = `${r.owner}/${r.name}`
         if (!seen.has(key)) {
           seen.add(key)
-          merged.push({ owner: r.owner, name: r.name })
+          merged.push({ owner: r.owner, name: r.name, pushedAt: pushedAtMap.get(key) ?? '' })
         }
       }
       for (const r of apiRepos) {
@@ -123,6 +132,15 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
           merged.push(r)
         }
       }
+
+      // Sort by pushedAt descending; repos with empty pushedAt go to end
+      merged.sort((a, b) => {
+        if (a.pushedAt === '' && b.pushedAt === '') return 0
+        if (a.pushedAt === '') return 1
+        if (b.pushedAt === '') return -1
+        return b.pushedAt.localeCompare(a.pushedAt)
+      })
+
       setRepos(merged)
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -333,6 +351,8 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
       const field = formFieldRef.current
       if (field === 'title') setTitle('')
       else if (field === 'body') setBody('')
+    } else if (action === 'help') {
+      setShowHelp((h) => !h)
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deps, clearForm, showMessage])
@@ -353,29 +373,33 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
     <DepsContext.Provider value={deps}>
       <VimProvider onCommand={handleCommand} onAction={handleAction}>
         <Box flexDirection="column">
-          <SplitPane
-            left={
-              <IssueForm
-                title={title}
-                body={body}
-                labels={selectedLabels}
-                onTitleChange={setTitle}
-                onBodyChange={setBody}
-                active={pane === 'form'}
-                editingIssue={editingIssue}
-                formField={formField}
-              />
-            }
-            right={
-              <IssueTable
-                openIssues={openIssues}
-                recentIssues={recentIssues}
-                active={pane === 'table'}
-                cursor={tableCursor}
-                tab={tableTab}
-              />
-            }
-          />
+          {showHelp ? (
+            <HelpOverlay />
+          ) : (
+            <SplitPane
+              left={
+                <IssueForm
+                  title={title}
+                  body={body}
+                  labels={selectedLabels}
+                  onTitleChange={setTitle}
+                  onBodyChange={setBody}
+                  active={pane === 'form'}
+                  editingIssue={editingIssue}
+                  formField={formField}
+                />
+              }
+              right={
+                <IssueTable
+                  openIssues={openIssues}
+                  recentIssues={recentIssues}
+                  active={pane === 'table'}
+                  cursor={tableCursor}
+                  tab={tableTab}
+                />
+              }
+            />
+          )}
           <StatusBar repo={repoLabel} message={statusMessage} />
           <MessageToast message={statusMessage} variant={messageVariant} />
         </Box>

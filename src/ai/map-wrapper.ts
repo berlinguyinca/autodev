@@ -26,6 +26,31 @@ interface MAPResultPayload {
   error?: string
 }
 
+interface MAPStepResult {
+  id: string
+  agent: string
+  task: string
+  status: string
+  outputType?: 'answer' | 'data' | 'files'
+  output?: string
+  filesCreated?: string[]
+  duration?: number
+  error?: string
+}
+
+interface MAPDAGResult {
+  nodes: Array<{ id: string; agent: string; status: string; duration: number }>
+  edges: Array<{ from: string; to: string }>
+}
+
+interface MAPResultPayloadV2 {
+  version: 2
+  success: boolean
+  steps?: MAPStepResult[]
+  dag?: MAPDAGResult
+  error?: string
+}
+
 export class MAPWrapper implements AIProvider {
   readonly model: AIModel = 'map'
   readonly handlesFullPipeline = true
@@ -93,23 +118,41 @@ export class MAPWrapper implements AIProvider {
       throw new AIInvocationError('map', 1, 'MAP produced no output')
     }
 
-    let result: MAPResultPayload
+    let result: MAPResultPayload | MAPResultPayloadV2
     try {
-      result = JSON.parse(jsonLine) as MAPResultPayload
+      result = JSON.parse(jsonLine) as MAPResultPayload | MAPResultPayloadV2
     } catch {
       throw new AIInvocationError('map', 1, 'MAP produced invalid JSON: ' + jsonLine.slice(0, 200))
     }
 
     // Version compatibility check
-    if (result.version !== EXPECTED_HEADLESS_VERSION) {
+    if (result.version !== 1 && result.version !== 2) {
       throw new AIInvocationError(
         'map', 1,
         `MAP headless result version mismatch: expected ${EXPECTED_HEADLESS_VERSION}, got ${result.version}. Update multi-agent-pipeline.`,
       )
     }
 
+    // v2 parsing path
+    if (result.version === 2) {
+      if (!result.success) {
+        throw new AIInvocationError(
+          'map', 1,
+          'MAP pipeline failed: ' + (result.error ?? '').slice(0, 200),
+        )
+      }
+      const filesWritten = scanModifiedFiles(workingDir, beforeMs)
+      return {
+        success: true,
+        filesWritten,
+        stdout: JSON.stringify({ version: 2, steps: result.steps, dag: result.dag }),
+        stderr: '',
+      }
+    }
+
+    // v1 path
     if (!result.success) {
-      throw new AIInvocationError('map', 1, 'MAP pipeline failed: ' + (result.error ?? '').slice(0, 200))
+      throw new AIInvocationError('map', 1, 'MAP pipeline failed: ' + ((result as MAPResultPayload).error ?? '').slice(0, 200))
     }
 
     const filesWritten = scanModifiedFiles(workingDir, beforeMs)
@@ -117,7 +160,7 @@ export class MAPWrapper implements AIProvider {
     return {
       success: true,
       filesWritten,
-      stdout: result.spec,
+      stdout: (result as MAPResultPayload).spec,
       stderr: '',
     }
   }

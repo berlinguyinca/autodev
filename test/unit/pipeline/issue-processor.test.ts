@@ -603,4 +603,74 @@ describe('IssueProcessor', () => {
     // prUrl should be set since PR was created before the error
     expect(result.prUrl).toBe('https://github.com/acme/api/pull/101')
   })
+
+  // -------------------------------------------------------------------------
+  // MAP v2 headless contract
+  // -------------------------------------------------------------------------
+
+  it('v2: posts answer and data steps as issue comments before PR creation', async () => {
+    const v2Stdout = JSON.stringify({
+      version: 2,
+      steps: [
+        { id: 's1', agent: 'claude', task: 'Analyse issue', status: 'done', outputType: 'answer', output: 'The answer is 42.' },
+        { id: 's2', agent: 'claude', task: 'Gather metrics', status: 'done', outputType: 'data', output: '{"count":7}' },
+        { id: 's3', agent: 'claude', task: 'Write code', status: 'done', outputType: 'files', filesCreated: ['src/a.ts'] },
+      ],
+      dag: { nodes: [], edges: [] },
+    })
+    ai.invokeStructuredThenAgent.mockResolvedValue({
+      structured: null,
+      agent: { success: true, filesWritten: ['src/a.ts'], stdout: v2Stdout, stderr: '' },
+      model: 'map' as AIModel,
+    })
+
+    await processor.processIssue(repo, issue)
+
+    // Should post comments for answer and data steps only
+    const issueCommentCalls = vi.mocked(github.postIssueComment).mock.calls
+    const stepComments = issueCommentCalls.filter(([, , , body]) =>
+      typeof body === 'string' && body.includes('MAP Agent Output'),
+    )
+    expect(stepComments).toHaveLength(2)
+    expect(stepComments[0]?.[3]).toContain('answer')
+    expect(stepComments[0]?.[3]).toContain('The answer is 42.')
+    expect(stepComments[1]?.[3]).toContain('data')
+    expect(stepComments[1]?.[3]).toContain('{"count":7}')
+  })
+
+  it('v2: files-only steps do not post extra comments', async () => {
+    const v2FilesOnly = JSON.stringify({
+      version: 2,
+      steps: [
+        { id: 's1', agent: 'claude', task: 'Write code', status: 'done', outputType: 'files', filesCreated: ['src/b.ts'] },
+      ],
+      dag: { nodes: [], edges: [] },
+    })
+    ai.invokeStructuredThenAgent.mockResolvedValue({
+      structured: null,
+      agent: { success: true, filesWritten: ['src/b.ts'], stdout: v2FilesOnly, stderr: '' },
+      model: 'map' as AIModel,
+    })
+
+    await processor.processIssue(repo, issue)
+
+    const issueCommentCalls = vi.mocked(github.postIssueComment).mock.calls
+    const stepComments = issueCommentCalls.filter(([, , , body]) =>
+      typeof body === 'string' && body.includes('MAP Agent Output'),
+    )
+    expect(stepComments).toHaveLength(0)
+  })
+
+  it('v2: non-JSON stdout is silently ignored (v1 flow continues normally)', async () => {
+    ai.invokeStructuredThenAgent.mockResolvedValue({
+      structured: null,
+      agent: { success: true, filesWritten: [], stdout: 'plain text output', stderr: '' },
+      model: 'claude' as AIModel,
+    })
+
+    const result = await processor.processIssue(repo, issue)
+
+    // Should complete successfully without errors
+    expect(result.success).toBe(true)
+  })
 })

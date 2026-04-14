@@ -88,7 +88,7 @@ export class IssueProcessor {
 
       // 5+6. AI Calls: generate spec then implement (combined for full-pipeline providers)
       try {
-        const { model } =
+        const { model, agent: agentResult } =
           await this.ai.invokeStructuredThenAgent<{ spec: string }>(
             buildSpecPrompt(issue),
             { type: 'object', properties: { spec: { type: 'string' } }, required: ['spec'] },
@@ -99,6 +99,31 @@ export class IssueProcessor {
 
         // Cache the model used for observability on re-runs
         this.specCache?.set(repoFullName, issue.number, issue.title, { success: true, filesWritten: [], stdout: '', stderr: '' }, modelUsed)
+
+        // v2: if the agent returned a v2 payload, post answer/data steps as issue comments
+        if (agentResult?.stdout) {
+          try {
+            const parsed = JSON.parse(agentResult.stdout) as {
+              version?: number
+              steps?: Array<{ outputType?: string; output?: string; task?: string }>
+            }
+            if (parsed.version === 2 && Array.isArray(parsed.steps)) {
+              for (const step of parsed.steps) {
+                if ((step.outputType === 'answer' || step.outputType === 'data') && step.output) {
+                  const stepComment = [
+                    `🤖 **MAP Agent Output** (${step.outputType})`,
+                    step.task ? `**Task:** ${step.task}` : '',
+                    '',
+                    step.output,
+                  ].filter(Boolean).join('\n')
+                  await this.github.postIssueComment(repo.owner, repo.name, issue.number, stepComment)
+                }
+              }
+            }
+          } catch {
+            // stdout is not JSON or not a v2 payload — continue normally
+          }
+        }
       } catch (err) {
         aiFailure = err instanceof Error ? err : new Error(String(err))
         console.error(`[pipeline] AI call failed for ${repoFullName}#${issue.number}:`, aiFailure.message)

@@ -231,7 +231,7 @@ export function VimProvider({
           setModeSync('insert')
           return
         }
-        if (input === 'E') {
+        if (input === 'e' || input === 'E') {
           onActionRef.current?.('toggle-comments')
           return
         }
@@ -305,7 +305,7 @@ export function VimProvider({
         return
       }
 
-      if (input === 'E') {
+      if (input === 'e' || input === 'E') {
         onActionRef.current?.('toggle-comments')
         return
       }

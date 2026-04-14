@@ -32,7 +32,7 @@ export function HelpOverlay(): React.JSX.Element {
           <Text>{'dd   clear'}</Text>
           <Text>{'x    close issue'}</Text>
           <Text>{'c    comment'}</Text>
-          <Text>{'E    expand/fold'}</Text>
+          <Text>{'e    expand/fold'}</Text>
           <Text>{'Esc  cancel'}</Text>
         </Box>
 

@@ -13,7 +13,7 @@ const RepoConfigSchema = z.object({
 
 const AIModelSchema = z.enum(['claude', 'codex', 'ollama', 'map'])
 
-const PipelineTaskSchema = z.enum(['specGeneration', 'implementation', 'codeReview', 'conflictResolution'])
+const PipelineTaskSchema = z.enum(['specGeneration', 'implementation', 'codeReview', 'conflictResolution', 'prReview'])
 
 const TaskModelConfigSchema = z.object({
   provider: AIModelSchema,

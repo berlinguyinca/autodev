@@ -4,6 +4,8 @@ import {
   buildImplementationPrompt,
   buildReviewPrompt,
   buildFollowUpPrompt,
+  buildAutoReviewPrompt,
+  buildSplitPlanPrompt,
 } from '../../../src/pipeline/prompts.js'
 import type { Issue, ReviewComment } from '../../../src/types/index.js'
 
@@ -131,5 +133,52 @@ describe('buildFollowUpPrompt', () => {
     const prompt = buildFollowUpPrompt(comments)
     expect(prompt).not.toContain('${undefined}')
     expect(prompt).not.toContain('[object Object]')
+  })
+})
+
+describe('buildAutoReviewPrompt', () => {
+  const diff = '--- a/src/foo.ts\n+++ b/src/foo.ts\n@@ -1 +1 @@\n-old\n+new'
+  const files = ['src/foo.ts', 'src/bar.ts']
+
+  it('contains the diff and file names', () => {
+    const prompt = buildAutoReviewPrompt(diff, files)
+    expect(prompt).toContain(diff)
+    expect(prompt).toContain('src/foo.ts')
+    expect(prompt).toContain('src/bar.ts')
+  })
+
+  it('mentions both merge and split verdicts', () => {
+    const prompt = buildAutoReviewPrompt(diff, files)
+    expect(prompt).toContain('"merge"')
+    expect(prompt).toContain('"split"')
+  })
+
+  it('biases toward merging', () => {
+    const prompt = buildAutoReviewPrompt(diff, files).toLowerCase()
+    expect(prompt).toMatch(/prefer.*merg|most.*prs.*should.*be.*merged/i)
+  })
+})
+
+describe('buildSplitPlanPrompt', () => {
+  const diff = '--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n-x\n+y'
+  const files = ['src/a.ts', 'test/a.test.ts']
+
+  it('contains the diff and file names', () => {
+    const prompt = buildSplitPlanPrompt(diff, files)
+    expect(prompt).toContain(diff)
+    expect(prompt).toContain('src/a.ts')
+    expect(prompt).toContain('test/a.test.ts')
+  })
+
+  it('instructs to return groups with name, description, and files', () => {
+    const prompt = buildSplitPlanPrompt(diff, files)
+    expect(prompt).toContain('"groups"')
+    expect(prompt).toContain('"name"')
+    expect(prompt).toContain('"files"')
+  })
+
+  it('requires every file in exactly one group', () => {
+    const prompt = buildSplitPlanPrompt(diff, files).toLowerCase()
+    expect(prompt).toMatch(/every file.*exactly one group/i)
   })
 })

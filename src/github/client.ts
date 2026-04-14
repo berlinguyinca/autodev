@@ -267,7 +267,22 @@ export class GitHubClient {
           isDraft: pr.draft ?? false,
           head: pr.head.ref,
           base: pr.base.ref,
+          title: pr.title,
+          labels: pr.labels.map((l) => l.name).filter((n): n is string => n !== undefined),
         }))
+    } catch (err) {
+      wrapError(err, owner, name)
+    }
+  }
+
+  async closePullRequest(owner: string, name: string, prNumber: number): Promise<void> {
+    try {
+      await this.octokit.pulls.update({
+        owner,
+        repo: name,
+        pull_number: prNumber,
+        state: 'closed',
+      })
     } catch (err) {
       wrapError(err, owner, name)
     }

@@ -4,12 +4,14 @@ import type { AIRouter } from '../ai/router.js'
 import type { PipelineConfig } from '../types/index.js'
 import { IssueProcessor } from './issue-processor.js'
 import { MergeProcessor } from './merge-processor.js'
+import { PRReviewProcessor } from './pr-review-processor.js'
 import { SpecCache } from './spec-cache.js'
 import { GitOperations } from '../git/index.js'
 
 export class PipelineRunner {
   private readonly processor: IssueProcessor
   private readonly mergeProcessor: MergeProcessor
+  private readonly reviewProcessor: PRReviewProcessor
 
   constructor(
     private readonly config: PipelineConfig,
@@ -21,13 +23,19 @@ export class PipelineRunner {
     const git = new GitOperations()
     this.processor = new IssueProcessor(github, ai, git, state, specCache)
     this.mergeProcessor = new MergeProcessor(github, ai, git, config)
+    this.reviewProcessor = new PRReviewProcessor(github, ai, git, config)
   }
 
   async run(): Promise<number> {
-    // Phase 1: Check for merge-ready PRs
+    // Phase 1: Check for comment-triggered merge requests
     await this.processMergeRequests()
 
-    // Phase 2: Process new issues
+    // Phase 2: Auto-review open PRs (merge or split)
+    if (this.config.autoMerge !== false) {
+      await this.processAutoReviews()
+    }
+
+    // Phase 3: Process new issues
     const maxIssues = this.config.maxIssuesPerRun ?? 10
     let processed = 0
     let succeeded = 0
@@ -97,6 +105,45 @@ export class PipelineRunner {
         }
       } catch (err) {
         console.error(`[merge] Failed to list PRs for ${repo.owner}/${repo.name}:`, err instanceof Error ? err.message : String(err))
+      }
+    }
+  }
+
+  private async processAutoReviews(): Promise<void> {
+    const allowDrafts = this.config.mergeDraftPRs ?? false
+    const trigger = this.config.mergeCommentTrigger ?? '/merge'
+
+    for (const repo of this.config.repos) {
+      try {
+        const prs = await this.github.listOpenPRsWithLabel(repo.owner, repo.name, 'ai-generated')
+
+        for (const pr of prs) {
+          if (pr.isDraft && !allowDrafts) continue
+
+          // Skip PRs that have a /merge comment — handled by Phase 1
+          try {
+            const comments = await this.github.listPRComments(repo.owner, repo.name, pr.number)
+            if (comments.some((c) => c.body.includes(trigger))) continue
+          } catch {
+            continue
+          }
+
+          try {
+            console.log(`[review] Auto-reviewing ${repo.owner}/${repo.name} PR #${pr.number}`)
+            const result = await this.reviewProcessor.reviewPR(repo, pr)
+            if (result.merged) {
+              console.log(`[review] Auto-merged PR #${pr.number}`)
+            } else if (result.splitInto.length > 0) {
+              console.log(`[review] Split PR #${pr.number} into ${result.splitInto.length} child PRs: ${result.splitInto.join(', ')}`)
+            } else if (result.error !== undefined) {
+              console.warn(`[review] Failed to process PR #${pr.number}: ${result.error}`)
+            }
+          } catch (err) {
+            console.error(`[review] Error reviewing PR #${pr.number}:`, err instanceof Error ? err.message : String(err))
+          }
+        }
+      } catch (err) {
+        console.error(`[review] Failed to list PRs for ${repo.owner}/${repo.name}:`, err instanceof Error ? err.message : String(err))
       }
     }
   }

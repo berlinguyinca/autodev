@@ -132,6 +132,10 @@ export class GitOperations {
     await runGit(['checkout', ref], dir)
   }
 
+  async checkoutFiles(dir: string, ref: string, files: string[]): Promise<void> {
+    await runGit(['checkout', ref, '--', ...files], dir)
+  }
+
   /** Attempt rebase onto target ref. Returns success or conflict info. */
   async rebase(dir: string, onto: string): Promise<RebaseResult> {
     try {

@@ -3,6 +3,7 @@ import { Box, Text } from 'ink'
 import { TextField } from './TextField.js'
 import type { FormField } from '../hooks/useVim.js'
 import { colors, messages } from '../theme.js'
+import type { IssueComment } from '../../types/index.js'
 
 interface IssueFormProps {
   title: string
@@ -13,10 +14,14 @@ interface IssueFormProps {
   active: boolean
   editingIssue: number | undefined
   formField: FormField
+  comments: IssueComment[]
+  commentText: string
+  onCommentChange: (v: string) => void
 }
 
 export function IssueForm({
   title, body, labels, onTitleChange, onBodyChange, active, editingIssue, formField,
+  comments, commentText, onCommentChange,
 }: IssueFormProps): React.JSX.Element {
   const borderColor = active ? colors.overalls : colors.dim
 
@@ -56,6 +61,31 @@ export function IssueForm({
           </Box>
         </Box>
       </Box>
+      {editingIssue !== undefined && (
+        <Box flexDirection="column" marginTop={1}>
+          <Text color={colors.dim}>{'── Comments (' + comments.length + ') ──'}</Text>
+          {comments.map((c, i) => (
+            <Box key={i}>
+              <Text color={colors.goggle}>@{c.author}</Text>
+              <Text color={colors.dim}>{': '}</Text>
+              <Text>{c.body}</Text>
+            </Box>
+          ))}
+          <Box marginTop={1}>
+            <Box width={2}>
+              {active && formField === 'comment'
+                ? <Text color={colors.overalls}>{'▶'}</Text>
+                : <Text>{' '}</Text>}
+            </Box>
+            <Box flexGrow={1}>
+              <TextField
+                label="Comment" value={commentText} onChange={onCommentChange}
+                active={active && formField === 'comment'}
+              />
+            </Box>
+          </Box>
+        </Box>
+      )}
       {labels.length > 0 && (
         <Box marginTop={1} gap={1}>
           {labels.map((l) => (

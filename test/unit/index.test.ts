@@ -317,7 +317,8 @@ describe('CLI run()', () => {
     logSpy.mockRestore()
 
     // Should run all 4 times (maxPollRuns) since consecutive failures never hit 3
-    expect(code).toBe(0)
+    // Last run (run 4) failed, so exit code propagates as 1
+    expect(code).toBe(1)
     expect(runCount).toBe(4)
 
     vi.useRealTimers()

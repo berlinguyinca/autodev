@@ -33,6 +33,7 @@ export function HelpOverlay(): React.JSX.Element {
           <Text>{'x    close issue'}</Text>
           <Text>{'c    comment'}</Text>
           <Text>{'e    expand/fold'}</Text>
+          <Text>{'R    switch repo'}</Text>
           <Text>{'Esc  cancel'}</Text>
         </Box>
 

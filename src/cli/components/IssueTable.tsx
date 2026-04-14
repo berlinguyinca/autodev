@@ -52,7 +52,7 @@ export function IssueTable({ openIssues, recentIssues, active, cursor, tab }: Is
   const isEmpty = rows.length === 0
 
   return (
-    <Box borderStyle="round" borderColor={borderColor} flexDirection="column">
+    <Box borderStyle="round" borderColor={borderColor} flexDirection="column" width="100%">
       {/* Tab headers */}
       <Box>
         <Box marginRight={1}>

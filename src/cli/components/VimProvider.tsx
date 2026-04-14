@@ -235,6 +235,10 @@ export function VimProvider({
           onActionRef.current?.('toggle-comments')
           return
         }
+        if (input === 'R') {
+          onActionRef.current?.('switch-repo')
+          return
+        }
         if (input === ':') {
           setModeSync('command')
           setCommandBufferSync('')
@@ -291,6 +295,11 @@ export function VimProvider({
 
       if (input === 'r') {
         onActionRef.current?.('refresh')
+        return
+      }
+
+      if (input === 'R') {
+        onActionRef.current?.('switch-repo')
         return
       }
 

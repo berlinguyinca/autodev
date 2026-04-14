@@ -63,7 +63,7 @@ export function IssueForm({
     : messages.header('Bello! Create Issue')
 
   return (
-    <Box flexDirection="column" borderStyle="round" borderColor={borderColor} paddingX={1} flexGrow={1}>
+    <Box flexDirection="column" borderStyle="round" borderColor={borderColor} paddingX={1} width="100%">
       <Text color={colors.banana} bold>{header}</Text>
       <Box flexDirection="column" marginTop={1}>
         <Box>

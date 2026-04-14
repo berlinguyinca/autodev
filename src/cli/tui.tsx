@@ -439,6 +439,9 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
       setShowHelp((h) => !h)
     } else if (action === 'toggle-comments') {
       setCommentsExpanded((e) => !e)
+    } else if (action === 'switch-repo') {
+      clearForm()
+      setScreen('repo-select')
     } else if (action === 'close-issue') {
       const editing = editingIssueRef.current
       const repo = selectedRepoRef.current
@@ -478,7 +481,7 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
   if (screen === 'repo-select') {
     return (
       <DepsContext.Provider value={deps}>
-        <Box flexDirection="column">
+        <Box flexDirection="column" height={terminalHeight}>
           <RepoSelector repos={repos} onSelect={handleRepoSelect} />
         </Box>
       </DepsContext.Provider>

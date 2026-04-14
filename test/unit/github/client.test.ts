@@ -15,6 +15,8 @@ vi.mock('@octokit/rest', () => {
   const mockCreateIssue = vi.fn()
   const mockListLabelsForRepo = vi.fn()
   const mockListForAuthenticatedUser = vi.fn()
+  const mockUpdateIssue = vi.fn()
+  const mockGetIssue = vi.fn()
 
   const mockOctokit = {
     issues: {
@@ -23,6 +25,8 @@ vi.mock('@octokit/rest', () => {
       createComment: mockCreateComment,
       create: mockCreateIssue,
       listLabelsForRepo: mockListLabelsForRepo,
+      update: mockUpdateIssue,
+      get: mockGetIssue,
     },
     pulls: {
       create: mockCreatePR,
@@ -58,6 +62,8 @@ function getMockOctokit() {
       createComment: Mock
       create: Mock
       listLabelsForRepo: Mock
+      update: Mock
+      get: Mock
     }
     pulls: {
       create: Mock
@@ -120,6 +126,7 @@ describe('GitHubClient', () => {
             title: 'Bug: crash on startup',
             body: 'The app crashes',
             html_url: 'https://github.com/acme/api/issues/10',
+            labels: [{ name: 'bug' }],
           },
         ],
         headers: {},
@@ -145,6 +152,7 @@ describe('GitHubClient', () => {
         url: 'https://github.com/acme/api/issues/10',
         repoOwner: 'acme',
         repoName: 'api',
+        labels: ['bug'],
       })
     })
 
@@ -158,6 +166,7 @@ describe('GitHubClient', () => {
             title: 'Real issue',
             body: 'issue body',
             html_url: 'https://github.com/acme/api/issues/10',
+            labels: [],
           },
           {
             id: 2,
@@ -166,6 +175,7 @@ describe('GitHubClient', () => {
             body: 'pr body',
             html_url: 'https://github.com/acme/api/pull/11',
             pull_request: { url: 'https://api.github.com/repos/acme/api/pulls/11' },
+            labels: [],
           },
         ],
         headers: {},
@@ -191,6 +201,7 @@ describe('GitHubClient', () => {
               title: 'Issue 1',
               body: 'body',
               html_url: 'https://github.com/acme/api/issues/1',
+              labels: [],
             },
           ],
           headers: {
@@ -205,6 +216,7 @@ describe('GitHubClient', () => {
               title: 'Issue 2',
               body: 'body',
               html_url: 'https://github.com/acme/api/issues/2',
+              labels: [],
             },
           ],
           headers: {},
@@ -615,7 +627,7 @@ describe('GitHubClient', () => {
     it('stops pagination when link header is missing', async () => {
       const mocks = getMockOctokit()
       mocks.issues.listForRepo.mockResolvedValueOnce({
-        data: [{ id: 1, number: 1, title: 'Issue', body: '', html_url: 'url' }],
+        data: [{ id: 1, number: 1, title: 'Issue', body: '', html_url: 'url', labels: [] }],
         headers: {},
       })
       const client = new GitHubClient()
@@ -632,7 +644,7 @@ describe('GitHubClient', () => {
     it('maps null body to empty string', async () => {
       const mocks = getMockOctokit()
       mocks.issues.listForRepo.mockResolvedValueOnce({
-        data: [{ id: 5, number: 5, title: 'No body', body: null, html_url: 'https://github.com/acme/api/issues/5' }],
+        data: [{ id: 5, number: 5, title: 'No body', body: null, html_url: 'https://github.com/acme/api/issues/5', labels: [] }],
         headers: {},
       })
       const client = new GitHubClient()
@@ -888,6 +900,117 @@ describe('GitHubClient', () => {
       mocks.repos.listForAuthenticatedUser.mockRejectedValueOnce(new Error('Network failure'))
       const client = new GitHubClient()
       await expect(client.listUserRepos()).rejects.toThrow('Network failure')
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // updateIssue
+  // -----------------------------------------------------------------------
+  describe('updateIssue', () => {
+    it('calls PATCH on the issue with title and body', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.update.mockResolvedValueOnce({ data: {} })
+      const client = new GitHubClient()
+      await client.updateIssue('acme', 'api', 7, 'New title', 'New body')
+      expect(mocks.issues.update).toHaveBeenCalledWith({
+        owner: 'acme',
+        repo: 'api',
+        issue_number: 7,
+        title: 'New title',
+        body: 'New body',
+      })
+    })
+
+    it('throws on 401 auth error', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.update.mockRejectedValueOnce(Object.assign(new Error('Unauthorized'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.updateIssue('acme', 'api', 7, 'T', 'B')).rejects.toThrow(/authentication failed/i)
+    })
+
+    it('throws on 404 not found', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.update.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+      const client = new GitHubClient()
+      await expect(client.updateIssue('acme', 'api', 7, 'T', 'B')).rejects.toThrow(/not found|no access/i)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // fetchIssueDetail
+  // -----------------------------------------------------------------------
+  describe('fetchIssueDetail', () => {
+    it('returns number, title, body, url, and labels as string array', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.get.mockResolvedValueOnce({
+        data: {
+          number: 7,
+          title: 'My issue',
+          body: 'Issue body',
+          html_url: 'https://github.com/acme/api/issues/7',
+          labels: [{ name: 'bug' }, { name: 'urgent' }],
+        },
+      })
+      const client = new GitHubClient()
+      const result = await client.fetchIssueDetail('acme', 'api', 7)
+      expect(mocks.issues.get).toHaveBeenCalledWith({
+        owner: 'acme',
+        repo: 'api',
+        issue_number: 7,
+      })
+      expect(result).toEqual({
+        number: 7,
+        title: 'My issue',
+        body: 'Issue body',
+        url: 'https://github.com/acme/api/issues/7',
+        labels: ['bug', 'urgent'],
+      })
+    })
+
+    it('handles string labels and filters empty names', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.get.mockResolvedValueOnce({
+        data: {
+          number: 8,
+          title: 'Mixed labels',
+          body: 'body',
+          html_url: 'https://github.com/acme/api/issues/8',
+          labels: ['string-label', { name: 'object-label' }, { name: undefined }],
+        },
+      })
+      const client = new GitHubClient()
+      const result = await client.fetchIssueDetail('acme', 'api', 8)
+      expect(result.labels).toEqual(['string-label', 'object-label'])
+    })
+
+    it('returns empty string for null body', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.get.mockResolvedValueOnce({
+        data: {
+          number: 9,
+          title: 'No body',
+          body: null,
+          html_url: 'https://github.com/acme/api/issues/9',
+          labels: [],
+        },
+      })
+      const client = new GitHubClient()
+      const result = await client.fetchIssueDetail('acme', 'api', 9)
+      expect(result.body).toBe('')
+    })
+
+    it('throws on 401 auth error', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.get.mockRejectedValueOnce(Object.assign(new Error('Unauthorized'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.fetchIssueDetail('acme', 'api', 7)).rejects.toThrow(/authentication failed/i)
+    })
+
+    it('throws on 404 not found', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.get.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+      const client = new GitHubClient()
+      await expect(client.fetchIssueDetail('acme', 'api', 7)).rejects.toThrow(/not found|no access/i)
     })
   })
 })

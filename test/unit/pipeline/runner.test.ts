@@ -62,6 +62,7 @@ function makeIssue(n: number): Issue {
     url: `https://github.com/acme/api/issues/${n}`,
     repoOwner: 'acme',
     repoName: 'api',
+    labels: [],
   }
 }
 

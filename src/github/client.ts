@@ -58,6 +58,7 @@ export class GitHubClient {
       body?: string | null
       html_url: string
       pull_request?: unknown
+      labels: Array<string | { name?: string }>
     }> = []
 
     let page = 1
@@ -93,6 +94,9 @@ export class GitHubClient {
         url: item.html_url,
         repoOwner: owner,
         repoName: name,
+        labels: item.labels
+          .map((l) => (typeof l === 'string' ? l : l.name ?? ''))
+          .filter((n) => n !== ''),
       }))
   }
 
@@ -330,6 +334,51 @@ export class GitHubClient {
       }
     } catch (err) {
       wrapError(err, owner, name)
+    }
+  }
+
+  async updateIssue(
+    owner: string,
+    name: string,
+    issueNumber: number,
+    title: string,
+    body: string,
+  ): Promise<void> {
+    try {
+      await this.octokit.issues.update({
+        owner,
+        repo: name,
+        issue_number: issueNumber,
+        title,
+        body,
+      })
+    } catch (err) {
+      throw wrapError(err, owner, name)
+    }
+  }
+
+  async fetchIssueDetail(
+    owner: string,
+    name: string,
+    issueNumber: number,
+  ): Promise<{ number: number; title: string; body: string; url: string; labels: string[] }> {
+    try {
+      const { data } = await this.octokit.issues.get({
+        owner,
+        repo: name,
+        issue_number: issueNumber,
+      })
+      return {
+        number: data.number,
+        title: data.title,
+        body: data.body ?? '',
+        url: data.html_url,
+        labels: data.labels
+          .map((l) => (typeof l === 'string' ? l : l.name ?? ''))
+          .filter((n) => n !== ''),
+      }
+    } catch (err) {
+      throw wrapError(err, owner, name)
     }
   }
 

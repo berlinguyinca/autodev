@@ -2,7 +2,7 @@ import { defineConfig } from "vitest/config";
 
 export default defineConfig({
   test: {
-    include: ["test/unit/**/*.test.ts", "test/integration/**/*.test.ts"],
+    include: ["test/unit/**/*.test.ts", "test/unit/**/*.test.tsx", "test/integration/**/*.test.ts"],
     environment: "node",
     passWithNoTests: true,
     coverage: {
@@ -15,7 +15,7 @@ export default defineConfig({
       },
       include: [
         "src/ai/**/*.ts",
-        "src/cli/tui.ts",
+        "src/cli/**/*.{ts,tsx}",
         "src/config/**/*.ts",
         "src/git/**/*.ts",
         "src/github/**/*.ts",

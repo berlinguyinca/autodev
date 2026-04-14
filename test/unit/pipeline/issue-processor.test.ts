@@ -111,6 +111,7 @@ const issue: Issue = {
   url: 'https://github.com/acme/api/issues/42',
   repoOwner: 'acme',
   repoName: 'api',
+  labels: [],
 }
 
 // ---------------------------------------------------------------------------

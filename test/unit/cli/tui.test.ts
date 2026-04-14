@@ -633,6 +633,32 @@ describe('runTui', () => {
   })
 
   // -----------------------------------------------------------------------
+  // Draft review: polish failure with non-Error value
+  // -----------------------------------------------------------------------
+  it('handles non-Error throw from polishText', async () => {
+    const deps = makeDeps({
+      polishText: vi.fn().mockRejectedValueOnce('string failure'),
+      promptSearch: vi.fn()
+        .mockResolvedValueOnce({ owner: 'org', name: 'api' })
+        .mockResolvedValueOnce('polish')
+        .mockResolvedValueOnce('submit')
+        .mockResolvedValueOnce('quit'),
+      promptInput: vi.fn()
+        .mockResolvedValueOnce('Title')
+        .mockResolvedValueOnce('Body'),
+    })
+
+    await runTui(deps)
+
+    expect(deps.output.error).toHaveBeenCalledWith(
+      expect.stringContaining('Polish failed: string failure'),
+    )
+    expect(deps.createIssue).toHaveBeenCalledWith(
+      'org', 'api', 'Title', 'Body', [],
+    )
+  })
+
+  // -----------------------------------------------------------------------
   // Draft review: edit title
   // promptSearch: repo → edit-title → submit → quit
   // promptInput: title → body → new-title

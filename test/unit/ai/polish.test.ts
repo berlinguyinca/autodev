@@ -1,14 +1,22 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
+// node:fs is mocked below to spy on rmSync
 
 vi.mock('../../../src/ai/base-wrapper.js', () => ({
   invokeProcess: vi.fn(),
 }))
 
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return { ...actual, rmSync: vi.fn(actual.rmSync) }
+})
+
+import { rmSync } from 'node:fs'
 import { polishIssueText } from '../../../src/ai/polish.js'
 import { invokeProcess } from '../../../src/ai/base-wrapper.js'
 import type { InvokeProcessOptions } from '../../../src/ai/base-wrapper.js'
 
 const mockInvoke = vi.mocked(invokeProcess)
+const mockRmSync = vi.mocked(rmSync)
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -51,7 +59,17 @@ describe('polishIssueText', () => {
     expect(result).toBeUndefined()
   })
 
-  it('uses input values when JSON fields are missing', async () => {
+  it('uses input title when JSON title is missing', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      stdout: '{"body":"new body"}\n',
+      stderr: '',
+    })
+
+    const result = await polishIssueText('keep this title', 'old body')
+    expect(result).toEqual({ title: 'keep this title', body: 'new body' })
+  })
+
+  it('uses input body when JSON body is missing', async () => {
     mockInvoke.mockResolvedValueOnce({
       stdout: '{"title":"new title"}\n',
       stderr: '',
@@ -84,6 +102,17 @@ describe('polishIssueText', () => {
     mockInvoke.mockRejectedValueOnce(new Error('MAP binary not found'))
 
     await expect(polishIssueText('title', 'body')).rejects.toThrow('MAP binary not found')
+  })
+
+  it('survives rmSync failure during cleanup', async () => {
+    mockInvoke.mockResolvedValueOnce({
+      stdout: '{"title":"polished","body":"text"}\n',
+      stderr: '',
+    })
+    mockRmSync.mockImplementationOnce(() => { throw new Error('EPERM') })
+
+    const result = await polishIssueText('title', 'body')
+    expect(result).toEqual({ title: 'polished', body: 'text' })
   })
 
   it('includes title and body in the prompt', async () => {

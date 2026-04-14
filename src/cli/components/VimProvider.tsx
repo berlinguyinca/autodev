@@ -222,6 +222,15 @@ export function VimProvider({
           onActionRef.current?.('tab-2')
           return
         }
+        if (input === 'x') {
+          onActionRef.current?.('close-issue')
+          return
+        }
+        if (input === 'c') {
+          onActionRef.current?.('focus-comment')
+          setModeSync('insert')
+          return
+        }
         if (input === ':') {
           setModeSync('command')
           setCommandBufferSync('')
@@ -278,6 +287,17 @@ export function VimProvider({
 
       if (input === 'r') {
         onActionRef.current?.('refresh')
+        return
+      }
+
+      if (input === 'x') {
+        onActionRef.current?.('close-issue')
+        return
+      }
+
+      if (input === 'c') {
+        onActionRef.current?.('focus-comment')
+        setModeSync('insert')
         return
       }
 

@@ -1,9 +1,13 @@
 import React from 'react'
-import { Box, Text } from 'ink'
+import { Box, Text, useStdout } from 'ink'
 import { TextField } from './TextField.js'
 import type { FormField } from '../hooks/useVim.js'
 import { colors, messages } from '../theme.js'
 import type { IssueComment } from '../../types/index.js'
+
+function truncate(s: string, max: number): string {
+  return s.length > max ? s.slice(0, max - 1) + '…' : s
+}
 
 interface IssueFormProps {
   title: string
@@ -24,6 +28,9 @@ export function IssueForm({
   title, body, labels, onTitleChange, onBodyChange, active, editingIssue, formField,
   comments, commentText, onCommentChange, commentsExpanded,
 }: IssueFormProps): React.JSX.Element {
+  const { stdout } = useStdout()
+  // Left pane is ~60% of terminal, minus borders(2), padding(2), indent(2)
+  const commentMaxWidth = Math.floor((stdout?.columns ?? 120) * 0.6) - 8
   const borderColor = active ? colors.overalls : colors.dim
 
   const header = editingIssue !== undefined
@@ -72,16 +79,16 @@ export function IssueForm({
                   <Text color={colors.goggle} bold>@{c.author}</Text>
                   <Box flexDirection="column" marginLeft={2}>
                     {c.body.split('\n').map((line, j) => (
-                      <Text key={j} wrap="truncate-end">{line}</Text>
+                      <Text key={j}>{truncate(line, commentMaxWidth)}</Text>
                     ))}
                   </Box>
                   {i < comments.length - 1 && <Text color={colors.dim}>{'─'.repeat(20)}</Text>}
                 </>
               ) : (
-                <Text wrap="truncate-end">
+                <Text>
                   <Text color={colors.goggle}>@{c.author}</Text>
                   <Text color={colors.dim}>{': '}</Text>
-                  <Text>{c.body.split('\n')[0] ?? ''}</Text>
+                  <Text>{truncate(c.body.split('\n')[0] ?? '', commentMaxWidth)}</Text>
                 </Text>
               )}
             </Box>

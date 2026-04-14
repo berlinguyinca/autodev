@@ -17,6 +17,7 @@ vi.mock('@octokit/rest', () => {
   const mockListForAuthenticatedUser = vi.fn()
   const mockUpdateIssue = vi.fn()
   const mockGetIssue = vi.fn()
+  const mockListComments = vi.fn()
 
   const mockOctokit = {
     issues: {
@@ -27,6 +28,7 @@ vi.mock('@octokit/rest', () => {
       listLabelsForRepo: mockListLabelsForRepo,
       update: mockUpdateIssue,
       get: mockGetIssue,
+      listComments: mockListComments,
     },
     pulls: {
       create: mockCreatePR,
@@ -64,6 +66,7 @@ function getMockOctokit() {
       listLabelsForRepo: Mock
       update: Mock
       get: Mock
+      listComments: Mock
     }
     pulls: {
       create: Mock
@@ -1011,6 +1014,73 @@ describe('GitHubClient', () => {
       mocks.issues.get.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
       const client = new GitHubClient()
       await expect(client.fetchIssueDetail('acme', 'api', 7)).rejects.toThrow(/not found|no access/i)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // closeIssue
+  // -----------------------------------------------------------------------
+  describe('closeIssue', () => {
+    it('calls issues.update with state closed', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.update.mockResolvedValueOnce({ data: {} })
+      const client = new GitHubClient()
+      await client.closeIssue('acme', 'api', 42)
+      expect(mocks.issues.update).toHaveBeenCalledWith({
+        owner: 'acme',
+        repo: 'api',
+        issue_number: 42,
+        state: 'closed',
+      })
+    })
+
+    it('re-throws 401 errors with GITHUB_TOKEN message', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.update.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.closeIssue('acme', 'api', 42)).rejects.toThrow(/GITHUB_TOKEN/i)
+    })
+
+    it('re-throws 404 errors with repo not found message', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.update.mockRejectedValueOnce(Object.assign(new Error('Not Found'), { status: 404 }))
+      const client = new GitHubClient()
+      await expect(client.closeIssue('acme', 'api', 42)).rejects.toThrow(/not found|no access/i)
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // listIssueComments
+  // -----------------------------------------------------------------------
+  describe('listIssueComments', () => {
+    it('returns mapped comments', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.listComments.mockResolvedValueOnce({
+        data: [
+          { id: 1, body: 'First comment', user: { login: 'alice' }, created_at: '2026-04-14T10:00:00Z' },
+          { id: 2, body: 'Second', user: { login: 'bob' }, created_at: '2026-04-14T11:00:00Z' },
+          { id: 3, body: 'No user', user: null, created_at: '2026-04-14T12:00:00Z' },
+        ],
+      })
+      const client = new GitHubClient()
+      const comments = await client.listIssueComments('acme', 'api', 10)
+      expect(comments).toEqual([
+        { author: 'alice', body: 'First comment', createdAt: '2026-04-14T10:00:00Z' },
+        { author: 'bob', body: 'Second', createdAt: '2026-04-14T11:00:00Z' },
+        { author: '', body: 'No user', createdAt: '2026-04-14T12:00:00Z' },
+      ])
+      expect(mocks.issues.listComments).toHaveBeenCalledWith({
+        owner: 'acme',
+        repo: 'api',
+        issue_number: 10,
+      })
+    })
+
+    it('re-throws 401 errors with GITHUB_TOKEN message', async () => {
+      const mocks = getMockOctokit()
+      mocks.issues.listComments.mockRejectedValueOnce(Object.assign(new Error('Bad credentials'), { status: 401 }))
+      const client = new GitHubClient()
+      await expect(client.listIssueComments('acme', 'api', 10)).rejects.toThrow(/GITHUB_TOKEN/i)
     })
   })
 })

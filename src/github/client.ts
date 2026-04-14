@@ -1,5 +1,5 @@
 import { Octokit } from '@octokit/rest'
-import type { Issue, ReviewComment, PRComment, PRInfo } from '../types/index.js'
+import type { Issue, ReviewComment, PRComment, PRInfo, IssueComment } from '../types/index.js'
 
 export interface CreatePRParams {
   owner: string
@@ -354,6 +354,36 @@ export class GitHubClient {
       })
     } catch (err) {
       throw wrapError(err, owner, name)
+    }
+  }
+
+  async closeIssue(owner: string, name: string, issueNumber: number): Promise<void> {
+    try {
+      await this.octokit.issues.update({
+        owner,
+        repo: name,
+        issue_number: issueNumber,
+        state: 'closed',
+      })
+    } catch (err) {
+      wrapError(err, owner, name)
+    }
+  }
+
+  async listIssueComments(owner: string, name: string, issueNumber: number): Promise<IssueComment[]> {
+    try {
+      const response = await this.octokit.issues.listComments({
+        owner,
+        repo: name,
+        issue_number: issueNumber,
+      })
+      return response.data.map((c) => ({
+        author: c.user?.login ?? '',
+        body: c.body ?? '',
+        createdAt: c.created_at,
+      }))
+    } catch (err) {
+      wrapError(err, owner, name)
     }
   }
 

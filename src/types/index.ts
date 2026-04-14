@@ -120,6 +120,12 @@ export interface PRComment {
   createdAt: string
 }
 
+export interface IssueComment {
+  author: string
+  body: string
+  createdAt: string
+}
+
 export interface PRInfo {
   number: number
   url: string

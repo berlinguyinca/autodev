@@ -31,7 +31,7 @@ export interface ProviderConfig {
   };
 }
 
-export type PipelineTask = 'specGeneration' | 'implementation' | 'codeReview' | 'conflictResolution'
+export type PipelineTask = 'specGeneration' | 'implementation' | 'codeReview' | 'conflictResolution' | 'prReview'
 
 export interface TaskModelConfig {
   provider: AIModel
@@ -41,6 +41,14 @@ export interface TaskModelConfig {
 export interface RetryConfig {
   maxAttempts: number
   backoffMinutes: number
+}
+
+export interface SecurityIssue {
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  file: string
+  line: number
+  description: string
+  suggestedFix: string
 }
 
 export interface PipelineConfig {
@@ -58,6 +66,10 @@ export interface PipelineConfig {
   mergeCommentTrigger?: string;
   mergeMethod?: 'merge' | 'squash' | 'rebase';
   mergeDraftPRs?: boolean;
+  autoMerge?: boolean;
+  autoMergeRequireTests?: boolean;
+  maxPollRuns?: number;
+  maxConsecutiveFailures?: number;
 }
 
 export interface QuotaState {
@@ -67,15 +79,23 @@ export interface QuotaState {
 }
 
 export interface IssueOutcome {
-  status: 'success' | 'failure'
+  status: 'success' | 'failure' | 'partial'
   lastAttempt: string        // ISO 8601
   attemptCount: number
   error?: string             // truncated failure reason
   prUrl?: string
 }
 
+export interface PROutcome {
+  status: 'merged' | 'split' | 'failed'
+  lastAttempt: string        // ISO 8601
+  attemptCount: number
+  error?: string
+}
+
 export interface PipelineState {
   processedIssues: Record<string, Record<number, IssueOutcome>>; // "owner/name" -> { issueNumber: outcome }
+  reviewedPRs?: Record<string, Record<number, PROutcome>>;      // "owner/name" -> { prNumber: outcome }
   quota: Record<string, QuotaState>; // keyed by AIModel values (extensible)
   starPromptSeen?: boolean;
 }
@@ -133,6 +153,30 @@ export interface PRInfo {
   isDraft: boolean
   head: string      // branch name
   base: string      // target branch
+  title: string
+  labels: string[]
+}
+
+export type ReviewVerdict = 'merge' | 'split'
+
+export interface PRReviewResult {
+  prNumber: number
+  repoFullName: string
+  verdict: ReviewVerdict
+  merged: boolean
+  splitInto: number[]   // PR numbers of child PRs (empty if merged or failed)
+  error?: string
+}
+
+export interface SplitGroup {
+  name: string           // e.g., "tests", "core-logic", "config"
+  description: string    // human-readable summary
+  files: string[]        // file paths in this group
+}
+
+export interface SplitPlan {
+  groups: SplitGroup[]
+  reasoning: string
 }
 
 export interface MergeResult {

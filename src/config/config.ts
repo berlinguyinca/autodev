@@ -13,7 +13,7 @@ const RepoConfigSchema = z.object({
 
 const AIModelSchema = z.enum(['claude', 'codex', 'ollama', 'map'])
 
-const PipelineTaskSchema = z.enum(['specGeneration', 'implementation', 'codeReview', 'conflictResolution'])
+const PipelineTaskSchema = z.enum(['specGeneration', 'implementation', 'codeReview', 'conflictResolution', 'prReview'])
 
 const TaskModelConfigSchema = z.object({
   provider: AIModelSchema,
@@ -41,6 +41,10 @@ const PipelineConfigSchema = z.object({
   mergeCommentTrigger: z.string().default('/merge'),
   mergeMethod: z.enum(['merge', 'squash', 'rebase']).default('merge'),
   mergeDraftPRs: z.boolean().default(false),
+  autoMerge: z.boolean().default(true),
+  autoMergeRequireTests: z.boolean().default(true),
+  maxPollRuns: z.number().int().positive().optional(),
+  maxConsecutiveFailures: z.number().int().positive().default(5),
 })
 
 type ZodParsed = z.infer<typeof PipelineConfigSchema>
@@ -93,6 +97,22 @@ function toTyped(parsed: ZodParsed): PipelineConfig {
 
   if (parsed.mergeDraftPRs) {
     config.mergeDraftPRs = parsed.mergeDraftPRs
+  }
+
+  if (!parsed.autoMerge) {
+    config.autoMerge = parsed.autoMerge
+  }
+
+  if (!parsed.autoMergeRequireTests) {
+    config.autoMergeRequireTests = parsed.autoMergeRequireTests
+  }
+
+  if (parsed.maxPollRuns !== undefined) {
+    config.maxPollRuns = parsed.maxPollRuns
+  }
+
+  if (parsed.maxConsecutiveFailures !== 5) {
+    config.maxConsecutiveFailures = parsed.maxConsecutiveFailures
   }
 
   return config

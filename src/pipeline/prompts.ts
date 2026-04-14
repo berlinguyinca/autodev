@@ -76,6 +76,41 @@ Instructions:
 - After fixing, ensure the code still compiles and tests pass.`
 }
 
+export function buildAutoReviewPrompt(diff: string, changedFiles: string[]): string {
+  return `You are a senior engineer deciding whether a pull request is safe to auto-merge or needs to be split into smaller PRs.
+
+Changed files: ${changedFiles.join(', ')}
+
+\`\`\`diff
+${diff}
+\`\`\`
+
+Evaluate the PR and decide:
+- **"merge"** if the change is focused (single concern), well-structured, and safe. Most PRs should be merged. Prefer merging unless there is a clear reason to split.
+- **"split"** only if the PR mixes genuinely unrelated concerns (e.g., a feature + an unrelated refactor + config changes that could each stand alone). Do NOT split just because a PR is large — large single-concern changes are fine to merge.
+
+Return JSON: { "verdict": "merge" | "split", "confidence": 0.0-1.0, "reasoning": "brief explanation", "concerns": ["list of any concerns, empty if none"] }`
+}
+
+export function buildSplitPlanPrompt(diff: string, changedFiles: string[]): string {
+  return `You are a senior engineer splitting a complex pull request into smaller, independently mergeable PRs.
+
+Changed files: ${changedFiles.join(', ')}
+
+\`\`\`diff
+${diff}
+\`\`\`
+
+Group the changed files into logical sets where each set:
+- Has a single clear purpose (e.g., "tests", "core logic", "configuration", "documentation")
+- Can be merged independently without breaking the build
+- Contains ALL files needed for that concern (don't split tightly-coupled files across groups)
+
+Every file must appear in exactly one group. Aim for 2-4 groups.
+
+Return JSON: { "groups": [{ "name": "short-kebab-name", "description": "one line summary", "files": ["path/to/file.ts"] }], "reasoning": "why this split makes sense" }`
+}
+
 export function buildConflictResolutionPrompt(conflict: ConflictFile): string {
   return `You are resolving a git merge conflict in the file "${conflict.path}".
 

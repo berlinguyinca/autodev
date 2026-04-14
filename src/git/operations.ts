@@ -72,8 +72,8 @@ export class GitOperations {
       await runGit(['clone', '--depth', '1', url, targetDir])
     }
     // Set git identity for commits in CI-like environments
-    await runGit(['config', 'user.email', 'pipeline@gh-issue-pipeline'], targetDir)
-    await runGit(['config', 'user.name', 'GH Issue Pipeline'], targetDir)
+    await runGit(['config', 'user.email', 'pipeline@minion'], targetDir)
+    await runGit(['config', 'user.name', 'Minion Pipeline'], targetDir)
   }
 
   async createBranch(dir: string, branchName: string): Promise<void> {
@@ -119,8 +119,8 @@ export class GitOperations {
   /** Full clone (not shallow) — required for rebase operations. */
   async cloneFull(url: string, targetDir: string, branch = 'main'): Promise<void> {
     await runGit(['clone', '--branch', branch, url, targetDir])
-    await runGit(['config', 'user.email', 'pipeline@gh-issue-pipeline'], targetDir)
-    await runGit(['config', 'user.name', 'GH Issue Pipeline'], targetDir)
+    await runGit(['config', 'user.email', 'pipeline@minion'], targetDir)
+    await runGit(['config', 'user.name', 'Minion Pipeline'], targetDir)
   }
 
   async fetch(dir: string, remote = 'origin', branch?: string): Promise<void> {
@@ -130,6 +130,10 @@ export class GitOperations {
 
   async checkout(dir: string, ref: string): Promise<void> {
     await runGit(['checkout', ref], dir)
+  }
+
+  async checkoutFiles(dir: string, ref: string, files: string[]): Promise<void> {
+    await runGit(['checkout', ref, '--', ...files], dir)
   }
 
   /** Attempt rebase onto target ref. Returns success or conflict info. */

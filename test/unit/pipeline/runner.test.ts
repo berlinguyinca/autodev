@@ -13,6 +13,10 @@ vi.mock('../../../src/pipeline/merge-processor.js', () => ({
   MergeProcessor: vi.fn(),
 }))
 
+vi.mock('../../../src/pipeline/pr-review-processor.js', () => ({
+  PRReviewProcessor: vi.fn(),
+}))
+
 vi.mock('../../../src/pipeline/spec-cache.js', () => ({
   SpecCache: vi.fn(),
 }))
@@ -42,6 +46,7 @@ vi.mock('../../../src/git/index.js', () => ({
 import { PipelineRunner } from '../../../src/pipeline/runner.js'
 import { IssueProcessor } from '../../../src/pipeline/issue-processor.js'
 import { MergeProcessor } from '../../../src/pipeline/merge-processor.js'
+import { PRReviewProcessor } from '../../../src/pipeline/pr-review-processor.js'
 import { GitHubClient } from '../../../src/github/client.js'
 import { StateManager } from '../../../src/config/state.js'
 import { AIRouter } from '../../../src/ai/router.js'
@@ -69,6 +74,8 @@ function makePR(n: number): PRInfo {
     isDraft: false,
     head: `ai/${n}-some-issue`,
     base: 'main',
+    title: `[AI] some issue #${n}`,
+    labels: ['ai-generated'],
   }
 }
 
@@ -87,6 +94,7 @@ const baseConfig: PipelineConfig = {
 describe('PipelineRunner', () => {
   let processorMock: { processIssue: ReturnType<typeof vi.fn> }
   let mergeProcessorMock: { processMergeRequest: ReturnType<typeof vi.fn> }
+  let reviewProcessorMock: { reviewPR: ReturnType<typeof vi.fn> }
   let githubMock: {
     fetchOpenIssues: ReturnType<typeof vi.fn>
     listOpenPRsWithLabel: ReturnType<typeof vi.fn>
@@ -121,6 +129,16 @@ describe('PipelineRunner', () => {
       }),
     }
 
+    reviewProcessorMock = {
+      reviewPR: vi.fn().mockResolvedValue({
+        prNumber: 1,
+        repoFullName: 'acme/api',
+        verdict: 'merge',
+        merged: true,
+        splitInto: [],
+      }),
+    }
+
     githubMock = {
       fetchOpenIssues: vi.fn().mockResolvedValue([makeIssue(1)]),
       listOpenPRsWithLabel: vi.fn().mockResolvedValue([]),
@@ -128,11 +146,16 @@ describe('PipelineRunner', () => {
       mergePullRequest: vi.fn().mockResolvedValue(undefined),
     }
 
-    stateMock = {}
+    stateMock = {
+      shouldReviewPR: vi.fn().mockReturnValue(true),
+      markPROutcome: vi.fn(),
+      getPRAttemptCount: vi.fn().mockReturnValue(0),
+    }
     aiMock = {}
 
     vi.mocked(IssueProcessor).mockImplementation(() => processorMock as unknown as IssueProcessor)
     vi.mocked(MergeProcessor).mockImplementation(() => mergeProcessorMock as unknown as MergeProcessor)
+    vi.mocked(PRReviewProcessor).mockImplementation(() => reviewProcessorMock as unknown as PRReviewProcessor)
     vi.mocked(GitHubClient).mockImplementation(() => githubMock as unknown as GitHubClient)
     vi.mocked(StateManager).mockImplementation(() => stateMock as unknown as StateManager)
     vi.mocked(AIRouter).mockImplementation(() => aiMock as unknown as AIRouter)
@@ -407,5 +430,236 @@ describe('PipelineRunner', () => {
     expect(mergeProcessorMock.processMergeRequest).not.toHaveBeenCalled()
     // Issue processing continues normally
     expect(processorMock.processIssue).toHaveBeenCalledTimes(1)
+  })
+
+  // -------------------------------------------------------------------------
+  // Phase 2: Auto-review
+  // -------------------------------------------------------------------------
+
+  it('auto-review phase: calls reviewPR for PRs without /merge comment', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([
+      { id: 1, body: 'looks good', user: 'dev', createdAt: '2024-01-01T00:00:00Z' },
+    ])
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    await runner.run()
+    logSpy.mockRestore()
+
+    expect(reviewProcessorMock.reviewPR).toHaveBeenCalledWith(repo1, pr)
+  })
+
+  it('auto-review phase: skips PRs that have /merge comment (handled by Phase 1)', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([
+      { id: 1, body: '/merge', user: 'dev', createdAt: '2024-01-01T00:00:00Z' },
+    ])
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+
+    await runner.run()
+    logSpy.mockRestore()
+
+    expect(reviewProcessorMock.reviewPR).not.toHaveBeenCalled()
+  })
+
+  it('auto-review phase: is skipped when autoMerge is false', async () => {
+    const config: PipelineConfig = { repos: [repo1], maxIssuesPerRun: 10, autoMerge: false }
+    const noAutoRunner = new PipelineRunner(
+      config,
+      githubMock as unknown as GitHubClient,
+      aiMock as unknown as AIRouter,
+      stateMock as unknown as StateManager,
+    )
+
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([])
+
+    await noAutoRunner.run()
+
+    // reviewPR should not be called since autoMerge is disabled
+    // But merge phase (comment-triggered) still runs
+    expect(reviewProcessorMock.reviewPR).not.toHaveBeenCalled()
+  })
+
+  it('auto-review phase: error does not block issue processing', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([])
+    reviewProcessorMock.reviewPR.mockRejectedValue(new Error('review crash'))
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    const code = await runner.run()
+    errorSpy.mockRestore()
+    logSpy.mockRestore()
+
+    // Issue processing should still run
+    expect(processorMock.processIssue).toHaveBeenCalledTimes(1)
+    expect(code).toBe(0)
+  })
+
+  // -------------------------------------------------------------------------
+  // Failsafe: PR review state tracking
+  // -------------------------------------------------------------------------
+
+  it('auto-review phase: skips PRs where shouldReviewPR returns false', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([])
+    ;(stateMock.shouldReviewPR as ReturnType<typeof vi.fn>).mockReturnValue(false)
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runner.run()
+    logSpy.mockRestore()
+
+    expect(reviewProcessorMock.reviewPR).not.toHaveBeenCalled()
+  })
+
+  it('auto-review phase: marks merged outcome in state', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([])
+    reviewProcessorMock.reviewPR.mockResolvedValue({
+      prNumber: 10,
+      repoFullName: 'acme/api',
+      verdict: 'merge',
+      merged: true,
+      splitInto: [],
+    })
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runner.run()
+    logSpy.mockRestore()
+
+    expect(stateMock.markPROutcome).toHaveBeenCalledWith(
+      'acme/api', 10,
+      expect.objectContaining({ status: 'merged', attemptCount: 1 }),
+    )
+  })
+
+  it('auto-review phase: marks split outcome in state', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([])
+    reviewProcessorMock.reviewPR.mockResolvedValue({
+      prNumber: 10,
+      repoFullName: 'acme/api',
+      verdict: 'split',
+      merged: false,
+      splitInto: [11, 12],
+    })
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runner.run()
+    logSpy.mockRestore()
+
+    expect(stateMock.markPROutcome).toHaveBeenCalledWith(
+      'acme/api', 10,
+      expect.objectContaining({ status: 'split', attemptCount: 1 }),
+    )
+  })
+
+  it('auto-review phase: marks failed outcome on error', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([])
+    reviewProcessorMock.reviewPR.mockRejectedValue(new Error('AI crash'))
+
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runner.run()
+    errorSpy.mockRestore()
+    logSpy.mockRestore()
+
+    expect(stateMock.markPROutcome).toHaveBeenCalledWith(
+      'acme/api', 10,
+      expect.objectContaining({ status: 'failed', error: 'AI crash' }),
+    )
+  })
+
+  it('auto-review phase: marks failed outcome when review returns error', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([])
+    reviewProcessorMock.reviewPR.mockResolvedValue({
+      prNumber: 10,
+      repoFullName: 'acme/api',
+      verdict: 'merge',
+      merged: false,
+      splitInto: [],
+      error: 'tests failed',
+    })
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runner.run()
+    warnSpy.mockRestore()
+    logSpy.mockRestore()
+
+    expect(stateMock.markPROutcome).toHaveBeenCalledWith(
+      'acme/api', 10,
+      expect.objectContaining({ status: 'failed', error: 'tests failed' }),
+    )
+  })
+
+  it('merge phase: skips PRs where shouldReviewPR returns false', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([
+      { id: 1, body: '/merge', user: 'dev', createdAt: '2024-01-01T00:00:00Z' },
+    ])
+    ;(stateMock.shouldReviewPR as ReturnType<typeof vi.fn>).mockReturnValue(false)
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runner.run()
+    logSpy.mockRestore()
+
+    expect(mergeProcessorMock.processMergeRequest).not.toHaveBeenCalled()
+  })
+
+  it('merge phase: marks merged outcome in state', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([
+      { id: 1, body: '/merge', user: 'dev', createdAt: '2024-01-01T00:00:00Z' },
+    ])
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runner.run()
+    logSpy.mockRestore()
+
+    expect(stateMock.markPROutcome).toHaveBeenCalledWith(
+      'acme/api', 10,
+      expect.objectContaining({ status: 'merged', attemptCount: 1 }),
+    )
+  })
+
+  it('merge phase: marks failed outcome when merge fails', async () => {
+    const pr = makePR(10)
+    githubMock.listOpenPRsWithLabel.mockResolvedValue([pr])
+    githubMock.listPRComments.mockResolvedValue([
+      { id: 1, body: '/merge', user: 'dev', createdAt: '2024-01-01T00:00:00Z' },
+    ])
+    mergeProcessorMock.processMergeRequest.mockResolvedValue({
+      prNumber: 10,
+      repoFullName: 'acme/api',
+      merged: false,
+      conflictsResolved: 0,
+      error: 'conflicts unresolvable',
+    })
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined)
+    await runner.run()
+    warnSpy.mockRestore()
+    logSpy.mockRestore()
+
+    expect(stateMock.markPROutcome).toHaveBeenCalledWith(
+      'acme/api', 10,
+      expect.objectContaining({ status: 'failed', error: 'conflicts unresolvable' }),
+    )
   })
 })

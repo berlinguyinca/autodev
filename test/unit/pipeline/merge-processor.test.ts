@@ -86,6 +86,8 @@ const pr: PRInfo = {
   isDraft: false,
   head: 'ai/42-add-feature',
   base: 'main',
+  title: '[AI] add feature',
+  labels: ['ai-generated'],
 }
 
 const baseConfig: PipelineConfig = {

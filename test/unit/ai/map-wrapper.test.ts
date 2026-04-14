@@ -287,6 +287,75 @@ describe('MAPWrapper', () => {
     expect(writtenContent).toContain('codex')
   })
 
+  describe('v2 headless contract', () => {
+    it('accepts version 2 and returns success with steps/dag in stdout', async () => {
+      const v2Fixture = JSON.stringify({
+        version: 2,
+        success: true,
+        steps: [
+          { id: 'step-1', agent: 'claude', task: 'Implement feature', status: 'done', outputType: 'files', filesCreated: ['src/foo.ts'] },
+        ],
+        dag: {
+          nodes: [{ id: 'step-1', agent: 'claude', status: 'done', duration: 1000 }],
+          edges: [],
+        },
+      })
+      spawnMock.mockReturnValue(makeFakeProcess({ stdout: v2Fixture }))
+
+      const result = await map.invokeAgent('prompt', '/tmp/workdir')
+
+      expect(result.success).toBe(true)
+      expect(result.stderr).toBe('')
+      const parsed = JSON.parse(result.stdout) as { version: number; steps: unknown[]; dag: unknown }
+      expect(parsed.version).toBe(2)
+      expect(Array.isArray(parsed.steps)).toBe(true)
+    })
+
+    it('throws AIInvocationError when version 2 result has success: false', async () => {
+      const v2FailFixture = JSON.stringify({
+        version: 2,
+        success: false,
+        error: 'agent timeout',
+      })
+      spawnMock.mockReturnValue(makeFakeProcess({ stdout: v2FailFixture }))
+
+      const rejection = await map.invokeAgent('prompt', '/tmp/workdir').catch((e: unknown) => e)
+      expect(rejection).toBeInstanceOf(AIInvocationError)
+      expect((rejection as AIInvocationError).message).toMatch(/MAP pipeline failed/)
+    })
+
+    it('throws AIInvocationError with empty error message when v2 result has no error field', async () => {
+      const v2FailNoError = JSON.stringify({
+        version: 2,
+        success: false,
+        // no error field
+      })
+      spawnMock.mockReturnValue(makeFakeProcess({ stdout: v2FailNoError }))
+
+      await expect(map.invokeAgent('prompt', '/tmp/workdir')).rejects.toThrow(AIInvocationError)
+    })
+
+    it('v2 result stdout is valid JSON with version=2, steps, and dag keys', async () => {
+      const v2Fixture = JSON.stringify({
+        version: 2,
+        success: true,
+        steps: [
+          { id: 's1', agent: 'claude', task: 'spec', status: 'done', outputType: 'answer', output: 'Answer text' },
+          { id: 's2', agent: 'claude', task: 'impl', status: 'done', outputType: 'files', filesCreated: ['src/a.ts'] },
+        ],
+        dag: { nodes: [], edges: [] },
+      })
+      spawnMock.mockReturnValue(makeFakeProcess({ stdout: v2Fixture }))
+
+      const result = await map.invokeAgent('prompt', '/tmp/workdir')
+
+      const parsed = JSON.parse(result.stdout) as { version: number; steps: Array<{ outputType?: string }>; dag: object }
+      expect(parsed.version).toBe(2)
+      expect(parsed.steps).toHaveLength(2)
+      expect(parsed.dag).toBeDefined()
+    })
+  })
+
   describe('detect', () => {
     it('returns available=true with version when map binary exists', () => {
       execFileSyncMock.mockReturnValue('0.1.0\n')

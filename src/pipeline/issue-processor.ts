@@ -7,6 +7,7 @@ import type { SpecCache } from './spec-cache.js'
 import { createTempDir, cleanupTempDir, buildBranchName } from '../git/index.js'
 import { buildSpecPrompt, buildImplementationPrompt, buildReviewPrompt, buildFollowUpPrompt } from './prompts.js'
 import { detectTestCommand, runTests } from './test-runner.js'
+import { humanizeAIError } from '../ai/errors.js'
 
 export class IssueProcessor {
   constructor(
@@ -88,7 +89,7 @@ export class IssueProcessor {
 
       // 5+6. AI Calls: generate spec then implement (combined for full-pipeline providers)
       try {
-        const { model } =
+        const { model, agent: agentResult } =
           await this.ai.invokeStructuredThenAgent<{ spec: string }>(
             buildSpecPrompt(issue),
             { type: 'object', properties: { spec: { type: 'string' } }, required: ['spec'] },
@@ -99,6 +100,31 @@ export class IssueProcessor {
 
         // Cache the model used for observability on re-runs
         this.specCache?.set(repoFullName, issue.number, issue.title, { success: true, filesWritten: [], stdout: '', stderr: '' }, modelUsed)
+
+        // v2: if the agent returned a v2 payload, post answer/data steps as issue comments
+        if (agentResult?.stdout) {
+          try {
+            const parsed = JSON.parse(agentResult.stdout) as {
+              version?: number
+              steps?: Array<{ outputType?: string; output?: string; task?: string }>
+            }
+            if (parsed.version === 2 && Array.isArray(parsed.steps)) {
+              for (const step of parsed.steps) {
+                if ((step.outputType === 'answer' || step.outputType === 'data') && step.output) {
+                  const stepComment = [
+                    `🤖 **MAP Agent Output** (${step.outputType})`,
+                    step.task ? `**Task:** ${step.task}` : '',
+                    '',
+                    step.output,
+                  ].filter(Boolean).join('\n')
+                  await this.github.postIssueComment(repo.owner, repo.name, issue.number, stepComment)
+                }
+              }
+            }
+          } catch {
+            // stdout is not JSON or not a v2 payload — continue normally
+          }
+        }
       } catch (err) {
         aiFailure = err instanceof Error ? err : new Error(String(err))
         console.error(`[pipeline] AI call failed for ${repoFullName}#${issue.number}:`, aiFailure.message)
@@ -129,7 +155,7 @@ export class IssueProcessor {
           '⚠️ No commit was created, so no PR was opened.',
           `**Model used:** ${modelUsed}`,
           `**Tests:** ${testsPassed ? '✅ Passing' : '❌ Failing'}`,
-          aiFailure !== null ? `**AI Error:** ${aiFailure.message}` : '',
+          aiFailure !== null ? `**AI Error:** ${humanizeAIError(aiFailure)}` : '',
         ])
         return {
           issueNumber: issue.number,
@@ -149,7 +175,7 @@ export class IssueProcessor {
       // 10. Create PR (regular or draft based on test result and AI failure)
       const prTitle = `[AI] ${issue.title}`
       const prBody = aiFailure !== null
-        ? `Automated implementation attempt for issue #${issue.number}.\n\n⚠️ AI invocation failed: ${aiFailure.message}`
+        ? `Automated implementation attempt for issue #${issue.number}.\n\n⚠️ ${humanizeAIError(aiFailure)}`
         : `Automated implementation for issue #${issue.number}.\n\n${issue.body}`
 
       const prParams = {
@@ -238,14 +264,14 @@ export class IssueProcessor {
         `**Model used:** ${modelUsed}`,
         `**Tests:** ${testsPassed ? '✅ Passing' : '❌ Failing'}`,
         `**Files changed:** ${filesChanged.join(', ') || 'none'}`,
-        aiFailure !== null ? `\n⚠️ **AI Error:** ${aiFailure.message}` : '',
+        aiFailure !== null ? `\n⚠️ **AI Error:** ${humanizeAIError(aiFailure)}` : '',
       ].join('\n').trim()
 
       await this.github.postIssueComment(repo.owner, repo.name, issue.number, commentBody)
 
       // 18. Mark issue as processed in state
       this.state.markIssueOutcome(repoFullName, issue.number, {
-        status: 'success',
+        status: isDraft ? 'partial' : 'success',
         lastAttempt: new Date().toISOString(),
         attemptCount: 1,
         prUrl,

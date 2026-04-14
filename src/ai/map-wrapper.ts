@@ -10,11 +10,44 @@ import type { AIModel, AIProvider, AgentResult, StructuredResult, ProviderConfig
 const DEFAULT_AGENT_TIMEOUT_MS = 30 * 60 * 1000 // 30 minutes
 const EXPECTED_HEADLESS_VERSION = 1
 
+const MINION_PERSONALITY = `You are a Minion from Despicable Me! While doing your work competently, express yourself in Minion-speak throughout your responses:
+- Mix in Minion words: bello (hello), poopaye (goodbye), tank yu (thank you), banana, tulaliloo ti amo (I love you), bee-do bee-do (alarm)
+- Get VERY excited about bananas whenever code, files, or tests are involved
+- Use "bananaaaa!" as an exclamation of joy when things work
+- Say "la boda la bodaaa" when celebrating success
+- Sprinkle in gibberish like "para tu, hana, dul, sae" between technical explanations
+- Stay technically competent — your code and specs must be correct — but wrap them in minion enthusiasm`
+
 interface MAPResultPayload {
   version: number
   success: boolean
   spec: string
   filesCreated: string[]
+  error?: string
+}
+
+interface MAPStepResult {
+  id: string
+  agent: string
+  task: string
+  status: string
+  outputType?: 'answer' | 'data' | 'files'
+  output?: string
+  filesCreated?: string[]
+  duration?: number
+  error?: string
+}
+
+interface MAPDAGResult {
+  nodes: Array<{ id: string; agent: string; status: string; duration: number }>
+  edges: Array<{ from: string; to: string }>
+}
+
+interface MAPResultPayloadV2 {
+  version: 2
+  success: boolean
+  steps?: MAPStepResult[]
+  dag?: MAPDAGResult
   error?: string
 }
 
@@ -65,6 +98,7 @@ export class MAPWrapper implements AIProvider {
       args.push('--config', tempConfigPath)
     }
 
+    args.push('--personality', MINION_PERSONALITY)
     args.push(prompt)
 
     const timeoutMs = this.config?.timeoutMs ?? DEFAULT_AGENT_TIMEOUT_MS
@@ -84,23 +118,42 @@ export class MAPWrapper implements AIProvider {
       throw new AIInvocationError('map', 1, 'MAP produced no output')
     }
 
-    let result: MAPResultPayload
+    let result: MAPResultPayload | MAPResultPayloadV2
     try {
-      result = JSON.parse(jsonLine) as MAPResultPayload
+      result = JSON.parse(jsonLine) as MAPResultPayload | MAPResultPayloadV2
     } catch {
       throw new AIInvocationError('map', 1, 'MAP produced invalid JSON: ' + jsonLine.slice(0, 200))
     }
 
     // Version compatibility check
-    if (result.version !== EXPECTED_HEADLESS_VERSION) {
+    if (result.version !== 1 && result.version !== 2) {
       throw new AIInvocationError(
         'map', 1,
         `MAP headless result version mismatch: expected ${EXPECTED_HEADLESS_VERSION}, got ${result.version}. Update multi-agent-pipeline.`,
       )
     }
 
+    // v2 parsing path
+    if (result.version === 2) {
+      const v2Result = result as MAPResultPayloadV2
+      if (!result.success) {
+        throw new AIInvocationError(
+          'map', 1,
+          'MAP pipeline failed: ' + (v2Result.error ?? '').slice(0, 200),
+        )
+      }
+      const filesWritten = scanModifiedFiles(workingDir, beforeMs)
+      return {
+        success: true,
+        filesWritten,
+        stdout: JSON.stringify({ version: 2, steps: v2Result.steps, dag: v2Result.dag }),
+        stderr: '',
+      }
+    }
+
+    // v1 path
     if (!result.success) {
-      throw new AIInvocationError('map', 1, 'MAP pipeline failed: ' + (result.error ?? '').slice(0, 200))
+      throw new AIInvocationError('map', 1, 'MAP pipeline failed: ' + ((result as MAPResultPayload).error ?? '').slice(0, 200))
     }
 
     const filesWritten = scanModifiedFiles(workingDir, beforeMs)
@@ -108,7 +161,7 @@ export class MAPWrapper implements AIProvider {
     return {
       success: true,
       filesWritten,
-      stdout: result.spec,
+      stdout: (result as MAPResultPayload).spec,
       stderr: '',
     }
   }

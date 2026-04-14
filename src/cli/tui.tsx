@@ -371,12 +371,20 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
 
   return (
     <DepsContext.Provider value={deps}>
-      <VimProvider onCommand={handleCommand} onAction={handleAction}>
+      <VimProvider
+        onCommand={handleCommand}
+        onAction={handleAction}
+        pane={pane}
+        formField={formField}
+        onPaneChange={setPane}
+        onFormFieldChange={setFormField}
+      >
         <Box flexDirection="column">
           {showHelp ? (
             <HelpOverlay />
           ) : (
             <SplitPane
+              isWide={editingIssue !== undefined}
               left={
                 <IssueForm
                   title={title}
@@ -392,7 +400,9 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
               right={
                 <IssueTable
                   openIssues={openIssues}
-                  recentIssues={recentIssues}
+                  recentIssues={
+                    recentIssues
+                  }
                   active={pane === 'table'}
                   cursor={tableCursor}
                   tab={tableTab}

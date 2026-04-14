@@ -8,12 +8,39 @@ interface StatusBarProps {
   message: string
 }
 
-export function StatusBar({ repo, message }: StatusBarProps): React.JSX.Element {
-  const { mode, commandBuffer } = useVim()
+function getHints(mode: string, inputMode: string, pane: string, commandBuffer: string, formField: string): string {
+  if (mode === 'command') {
+    return `:${commandBuffer}`
+  }
 
-  const modeLabel = mode === 'command'
-    ? `:${commandBuffer}`
-    : `-- ${mode.toUpperCase()} --`
+  const fieldLabel = formField === 'title' ? 'Title' : 'Body'
+
+  if (mode === 'insert') {
+    if (pane === 'form') {
+      return `[${fieldLabel}]  Esc=normal  Tab=field  ^V=` + (inputMode === 'vim' ? 'basic' : 'vim')
+    }
+    return 'Esc=normal  Tab=field  ^V=' + (inputMode === 'vim' ? 'basic' : 'vim')
+  }
+
+  // Normal mode
+  if (inputMode === 'basic') {
+    if (pane === 'form') {
+      return `[${fieldLabel}]  \u2191\u2193=field  Enter=edit  :w=save  :q=quit  ^V=vim  ?=help`
+    }
+    return 'Tab=pane  \u2191\u2193=navigate  Enter=edit  :w=save  ^V=vim  ?=help'
+  }
+
+  // Vim normal
+  if (pane === 'form') {
+    return `[${fieldLabel}]  j/k=field  Enter=edit  :w=save  :q=quit  h/l=panes  ^V=basic`
+  }
+  return 'j/k=nav  Enter=edit  :w=save  :q=quit  ^V=basic'
+}
+
+export function StatusBar({ repo, message }: StatusBarProps): React.JSX.Element {
+  const { mode, commandBuffer, inputMode, pane, formField } = useVim()
+
+  const hints = getHints(mode, inputMode, pane, commandBuffer, formField)
 
   return (
     <Box>
@@ -26,7 +53,7 @@ export function StatusBar({ repo, message }: StatusBarProps): React.JSX.Element 
         </Box>
       ) : null}
       <Box>
-        <Text color={colors.dim}>{modeLabel}</Text>
+        <Text color={colors.dim}>{hints}</Text>
       </Box>
     </Box>
   )

@@ -70,8 +70,10 @@ export function IssueForm({
               {commentsExpanded ? (
                 <>
                   <Text color={colors.goggle} bold>@{c.author}</Text>
-                  <Box marginLeft={2}>
-                    <Text wrap="wrap">{c.body}</Text>
+                  <Box flexDirection="column" marginLeft={2}>
+                    {c.body.split('\n').map((line, j) => (
+                      <Text key={j} wrap="truncate-end">{line}</Text>
+                    ))}
                   </Box>
                   {i < comments.length - 1 && <Text color={colors.dim}>{'─'.repeat(20)}</Text>}
                 </>

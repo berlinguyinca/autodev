@@ -7,6 +7,9 @@ export interface TuiDeps {
   fetchIssueDetail: (owner: string, name: string, number: number) => Promise<{ number: number; title: string; body: string; url: string; labels: string[] }>
   createIssue: (owner: string, name: string, title: string, body: string, labels: string[]) => Promise<{ number: number; url: string }>
   updateIssue: (owner: string, name: string, number: number, title: string, body: string) => Promise<void>
+  closeIssue: (owner: string, name: string, number: number) => Promise<void>
+  listIssueComments: (owner: string, name: string, number: number) => Promise<Array<{ author: string; body: string; createdAt: string }>>
+  postIssueComment: (owner: string, name: string, number: number, body: string) => Promise<void>
   polishText?: ((title: string, body: string) => Promise<{ title: string; body: string } | undefined>) | undefined
   configRepos: Array<{ owner: string; name: string }>
   getInputMode: () => 'vim' | 'basic'

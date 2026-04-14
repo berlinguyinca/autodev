@@ -9,6 +9,7 @@ export interface Issue {
   url: string;
   repoOwner: string;
   repoName: string;
+  labels: string[];
 }
 
 export interface RepoConfig {

@@ -126,6 +126,7 @@ describe('GitHubClient', () => {
             title: 'Bug: crash on startup',
             body: 'The app crashes',
             html_url: 'https://github.com/acme/api/issues/10',
+            labels: [{ name: 'bug' }],
           },
         ],
         headers: {},
@@ -151,6 +152,7 @@ describe('GitHubClient', () => {
         url: 'https://github.com/acme/api/issues/10',
         repoOwner: 'acme',
         repoName: 'api',
+        labels: ['bug'],
       })
     })
 
@@ -164,6 +166,7 @@ describe('GitHubClient', () => {
             title: 'Real issue',
             body: 'issue body',
             html_url: 'https://github.com/acme/api/issues/10',
+            labels: [],
           },
           {
             id: 2,
@@ -172,6 +175,7 @@ describe('GitHubClient', () => {
             body: 'pr body',
             html_url: 'https://github.com/acme/api/pull/11',
             pull_request: { url: 'https://api.github.com/repos/acme/api/pulls/11' },
+            labels: [],
           },
         ],
         headers: {},
@@ -197,6 +201,7 @@ describe('GitHubClient', () => {
               title: 'Issue 1',
               body: 'body',
               html_url: 'https://github.com/acme/api/issues/1',
+              labels: [],
             },
           ],
           headers: {
@@ -211,6 +216,7 @@ describe('GitHubClient', () => {
               title: 'Issue 2',
               body: 'body',
               html_url: 'https://github.com/acme/api/issues/2',
+              labels: [],
             },
           ],
           headers: {},
@@ -621,7 +627,7 @@ describe('GitHubClient', () => {
     it('stops pagination when link header is missing', async () => {
       const mocks = getMockOctokit()
       mocks.issues.listForRepo.mockResolvedValueOnce({
-        data: [{ id: 1, number: 1, title: 'Issue', body: '', html_url: 'url' }],
+        data: [{ id: 1, number: 1, title: 'Issue', body: '', html_url: 'url', labels: [] }],
         headers: {},
       })
       const client = new GitHubClient()
@@ -638,7 +644,7 @@ describe('GitHubClient', () => {
     it('maps null body to empty string', async () => {
       const mocks = getMockOctokit()
       mocks.issues.listForRepo.mockResolvedValueOnce({
-        data: [{ id: 5, number: 5, title: 'No body', body: null, html_url: 'https://github.com/acme/api/issues/5' }],
+        data: [{ id: 5, number: 5, title: 'No body', body: null, html_url: 'https://github.com/acme/api/issues/5', labels: [] }],
         headers: {},
       })
       const client = new GitHubClient()

@@ -124,6 +124,11 @@ export function VimProvider({ children, onAction, onCommand }: VimProviderProps)
         return
       }
 
+      if (input === 'r') {
+        onActionRef.current?.('refresh')
+        return
+      }
+
       if (input === 'G') {
         onActionRef.current?.('jump-bottom')
         return

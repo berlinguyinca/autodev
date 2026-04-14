@@ -214,7 +214,7 @@ export async function run(argv: string[] = process.argv.slice(2)): Promise<numbe
       fetchLabels: (o, n) => github.fetchLabels(o, n),
       fetchOpenIssues: async (o, n) => {
         const issues = await github.fetchOpenIssues(o, n)
-        return issues.map((i) => ({ number: i.number, title: i.title, labels: [] as string[] }))
+        return issues.map((i) => ({ number: i.number, title: i.title, labels: i.labels }))
       },
       fetchIssueDetail: (o, n, num) => github.fetchIssueDetail(o, n, num),
       createIssue: (o, n, t, b, l) => github.createIssue(o, n, t, b, l),

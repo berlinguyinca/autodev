@@ -50,6 +50,7 @@ function makeIssue(n: number, repo: { owner: string; name: string }): Issue {
     url: `https://github.com/${repo.owner}/${repo.name}/issues/${n}`,
     repoOwner: repo.owner,
     repoName: repo.name,
+    labels: [],
   }
 }
 

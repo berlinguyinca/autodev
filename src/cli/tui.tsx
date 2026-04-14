@@ -9,7 +9,7 @@ import { MessageToast } from './components/MessageToast.js'
 import { SplitPane } from './components/SplitPane.js'
 import { DepsContext, type TuiDeps } from './hooks/useDeps.js'
 import { messages } from './theme.js'
-import type { Pane } from './hooks/useVim.js'
+import type { Pane, FormField } from './hooks/useVim.js'
 
 export type { TuiDeps } from './hooks/useDeps.js'
 
@@ -38,8 +38,10 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
   // Form state
   const [title, setTitle] = useState('')
   const [body, setBody] = useState('')
-  const [labels, setLabels] = useState<string[]>([])
+  const [availableLabels, setAvailableLabels] = useState<string[]>([])
+  const [selectedLabels, setSelectedLabels] = useState<string[]>([])
   const [editingIssue, setEditingIssue] = useState<number | undefined>(undefined)
+  const [formField, setFormField] = useState<FormField>('title')
 
   // Table state
   const [openIssues, setOpenIssues] = useState<Array<{ number: number; title: string; labels: string[] }>>([])
@@ -56,7 +58,8 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
   const selectedRepoRef = useRef(selectedRepo)
   const titleRef = useRef(title)
   const bodyRef = useRef(body)
-  const labelsRef = useRef(labels)
+  const selectedLabelsRef = useRef(selectedLabels)
+  const formFieldRef = useRef(formField)
   const editingIssueRef = useRef(editingIssue)
   const openIssuesRef = useRef(openIssues)
   const recentIssuesRef = useRef(recentIssues)
@@ -67,7 +70,8 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
   selectedRepoRef.current = selectedRepo
   titleRef.current = title
   bodyRef.current = body
-  labelsRef.current = labels
+  selectedLabelsRef.current = selectedLabels
+  formFieldRef.current = formField
   editingIssueRef.current = editingIssue
   openIssuesRef.current = openIssues
   recentIssuesRef.current = recentIssues
@@ -75,14 +79,20 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
   tableTabRef.current = tableTab
   paneRef.current = pane
 
-  // Show a transient message
+  // Show a transient message (auto-clears after 3s)
+  const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const showMessage = useCallback((msg: string, variant?: 'success' | 'error' | undefined): void => {
+    if (messageTimerRef.current !== null) clearTimeout(messageTimerRef.current)
     setStatusMessage(msg)
     setMessageVariant(variant)
-    setTimeout(() => {
+    messageTimerRef.current = setTimeout(() => {
       setStatusMessage('')
       setMessageVariant(undefined)
+      messageTimerRef.current = null
     }, 3000)
+  }, [])
+  useEffect(() => {
+    return () => { if (messageTimerRef.current !== null) clearTimeout(messageTimerRef.current) }
   }, [])
 
   // Fetch repos on startup
@@ -139,9 +149,9 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
     void (async () => {
       try {
         const fetched = await deps.fetchLabels(repo.owner, repo.name)
-        setLabels(fetched)
+        setAvailableLabels(fetched)
       } catch {
-        setLabels([])
+        setAvailableLabels([])
       }
     })()
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -151,6 +161,7 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
   const clearForm = useCallback((): void => {
     setTitle('')
     setBody('')
+    setSelectedLabels([])
     setEditingIssue(undefined)
   }, [])
 
@@ -174,7 +185,7 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
             await deps.updateIssue(repo.owner, repo.name, editing, currentTitle, currentBody)
             showMessage(messages.issueUpdated(editing), 'success')
           } else {
-            const result = await deps.createIssue(repo.owner, repo.name, currentTitle, currentBody, labelsRef.current)
+            const result = await deps.createIssue(repo.owner, repo.name, currentTitle, currentBody, selectedLabelsRef.current)
             showMessage(messages.issueCreated(result.number, `${repo.owner}/${repo.name}`), 'success')
             setRecentIssues((prev) => [
               { number: result.number, title: currentTitle, repo: `${repo.owner}/${repo.name}` },
@@ -209,7 +220,7 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
           if (editing !== undefined) {
             await deps.updateIssue(repo.owner, repo.name, editing, currentTitle, currentBody)
           } else {
-            await deps.createIssue(repo.owner, repo.name, currentTitle, currentBody, labelsRef.current)
+            await deps.createIssue(repo.owner, repo.name, currentTitle, currentBody, selectedLabelsRef.current)
           }
           app.exit()
         } catch (err) {
@@ -237,13 +248,15 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
           const items = currentTab === 'open' ? openIssuesRef.current : recentIssuesRef.current
           return items.length === 0 ? 0 : Math.min(c + 1, items.length - 1)
         })
+      } else {
+        setFormField((f) => (f === 'title' ? 'body' : 'title'))
       }
-      // form move-down is handled by VimProvider (formField cycling)
     } else if (action === 'move-up') {
       if (currentPane === 'table') {
         setTableCursor((c) => Math.max(0, c - 1))
+      } else {
+        setFormField((f) => (f === 'body' ? 'title' : 'body'))
       }
-      // form move-up is handled by VimProvider (formField cycling)
     } else if (action === 'move-left') {
       setPane('form')
     } else if (action === 'move-right') {
@@ -317,9 +330,9 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
         showMessage('Cancelled edit', undefined)
       }
     } else if (action === 'clear-field') {
-      // TODO: formField lives inside VimProvider, which is a child of App.
-      // handleAction is passed as a prop *to* VimProvider, so we can't read
-      // formField here. Needs formField lifted to App state in a follow-up.
+      const field = formFieldRef.current
+      if (field === 'title') setTitle('')
+      else if (field === 'body') setBody('')
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deps, clearForm, showMessage])
@@ -345,11 +358,12 @@ function App({ deps }: { deps: TuiDeps }): React.JSX.Element {
               <IssueForm
                 title={title}
                 body={body}
-                labels={labels}
+                labels={selectedLabels}
                 onTitleChange={setTitle}
                 onBodyChange={setBody}
                 active={pane === 'form'}
                 editingIssue={editingIssue}
+                formField={formField}
               />
             }
             right={

@@ -13,7 +13,7 @@ describe('IssueForm', () => {
     const { lastFrame } = render(wrap(
       <IssueForm title="" body="" labels={[]}
         onTitleChange={() => {}} onBodyChange={() => {}}
-        active={true} editingIssue={undefined} />
+        active={true} editingIssue={undefined} formField="title" />
     ))
     expect(lastFrame()).toContain('Bello')
     expect(lastFrame()).toContain('Create Issue')
@@ -23,7 +23,7 @@ describe('IssueForm', () => {
     const { lastFrame } = render(wrap(
       <IssueForm title="Fix bug" body="Details" labels={['bug']}
         onTitleChange={() => {}} onBodyChange={() => {}}
-        active={true} editingIssue={42} />
+        active={true} editingIssue={42} formField="title" />
     ))
     expect(lastFrame()).toContain('Editing #42')
   })
@@ -32,7 +32,7 @@ describe('IssueForm', () => {
     const { lastFrame } = render(wrap(
       <IssueForm title="My title" body="My body" labels={[]}
         onTitleChange={() => {}} onBodyChange={() => {}}
-        active={true} editingIssue={undefined} />
+        active={true} editingIssue={undefined} formField="title" />
     ))
     expect(lastFrame()).toContain('Title')
     expect(lastFrame()).toContain('My title')
@@ -44,7 +44,7 @@ describe('IssueForm', () => {
     const { lastFrame } = render(wrap(
       <IssueForm title="" body="" labels={['bug', 'urgent']}
         onTitleChange={() => {}} onBodyChange={() => {}}
-        active={true} editingIssue={undefined} />
+        active={true} editingIssue={undefined} formField="title" />
     ))
     expect(lastFrame()).toContain('bug')
     expect(lastFrame()).toContain('urgent')
@@ -54,7 +54,7 @@ describe('IssueForm', () => {
     const { lastFrame } = render(wrap(
       <IssueForm title="" body="" labels={[]}
         onTitleChange={() => {}} onBodyChange={() => {}}
-        active={true} editingIssue={undefined} />
+        active={true} editingIssue={undefined} formField="title" />
     ))
     // No label brackets visible
     expect(lastFrame()).not.toContain('[')

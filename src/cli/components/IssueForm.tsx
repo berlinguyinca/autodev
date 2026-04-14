@@ -1,7 +1,7 @@
 import React from 'react'
 import { Box, Text } from 'ink'
 import { TextField } from './TextField.js'
-import { useVim } from '../hooks/useVim.js'
+import type { FormField } from '../hooks/useVim.js'
 import { colors, messages } from '../theme.js'
 
 interface IssueFormProps {
@@ -12,12 +12,12 @@ interface IssueFormProps {
   onBodyChange: (v: string) => void
   active: boolean
   editingIssue: number | undefined
+  formField: FormField
 }
 
 export function IssueForm({
-  title, body, labels, onTitleChange, onBodyChange, active, editingIssue,
+  title, body, labels, onTitleChange, onBodyChange, active, editingIssue, formField,
 }: IssueFormProps): React.JSX.Element {
-  const { formField } = useVim()
   const borderColor = active ? colors.overalls : colors.dim
 
   const header = editingIssue !== undefined

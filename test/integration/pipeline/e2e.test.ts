@@ -114,6 +114,7 @@ function startFakeGitHubServer(): Promise<FakeServer> {
           body: 'Widget is broken',
           html_url: 'https://github.com/local/test-repo/issues/1',
           pull_request: undefined,
+          labels: [],
         },
       ])
       return

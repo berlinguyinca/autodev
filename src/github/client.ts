@@ -58,6 +58,7 @@ export class GitHubClient {
       body?: string | null
       html_url: string
       pull_request?: unknown
+      labels: Array<string | { name?: string }>
     }> = []
 
     let page = 1
@@ -93,6 +94,9 @@ export class GitHubClient {
         url: item.html_url,
         repoOwner: owner,
         repoName: name,
+        labels: item.labels
+          .map((l) => (typeof l === 'string' ? l : l.name ?? ''))
+          .filter((n) => n !== ''),
       }))
   }
 
